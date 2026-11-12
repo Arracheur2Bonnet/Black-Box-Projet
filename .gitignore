@@ -1,0 +1,16 @@
+# Data are downloaded by the scripts, never committed
+data/
+# Figures and result files are produced locally by the scripts
+outputs/
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+# Editors and OS
+.vscode/
+.idea/
+desktop.ini
+Thumbs.db
+.DS_Store
