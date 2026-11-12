@@ -89,6 +89,79 @@ the 2019 version.
 - The intervals reflect the uncertainty from the people sampled, not the
   variation between two trainings of the same model.
 
+## E2: does the black box win on a forecasting problem?
+
+Script: `src/e2_forecast.py`
+
+### Task and data
+
+We forecast the change in the US unemployment rate over the next 12 months.
+The task follows the Bank of England study of Buckmann and Joseph (2022), who
+report that machine learning models beat linear models on it.
+
+The data are the FRED-MD panel of the Federal Reserve Bank of St. Louis
+(McCracken and Ng, 2016): 126 monthly US macroeconomic series (output, labour
+market, housing, money, interest rates, prices, stock market). We use the
+release of September 2026 and the months from January 1960 to September 2025,
+the last month before a gap in the unemployment series. Each series is made
+stable over time with the transformation recommended by the authors of the
+panel (for example a growth rate instead of a level). The 119 series without
+missing values are kept.
+
+The inputs known at the end of a month are the average of the last three
+monthly values of each of the 119 series, plus the current unemployment rate:
+120 inputs in total.
+
+### Methods compared
+
+| Method | Kind | Inputs |
+|---|---|---|
+| Naive: unemployment does not change | baseline | none |
+| Autoregressive model | interpretable | last 6 unemployment rates |
+| Sparse linear model (Lasso), at most 10 series | interpretable | the 120 inputs |
+| Gradient boosting (LightGBM) | black box | the 120 inputs |
+
+The sparse linear model and the black box have access to the same panel. The
+difference is that the linear model may use at most 10 series, which is our
+criterion for an interpretable model.
+
+### Protocol
+
+1. **Rolling origin.** A forecast for month T is made at the end of month T-12.
+   The model that makes it was fitted only on examples whose 12-month outcome
+   was already known at that date. Random cross-validation is never used on
+   time series, because it would let a model learn from the future.
+2. **Yearly refit.** The models are re-estimated once a year on all the data
+   available at that date. Forecasts cover January 1990 to September 2025 (429
+   months).
+3. **Same tuning effort.** The sparse linear model chooses among six sizes (1,
+   2, 3, 5, 8 or 10 series) and the gradient boosting among six settings. Both
+   choices are made on the last ten years of the training window, which the
+   candidates have not seen.
+4. **Measure.** The root mean squared error (RMSE) in percentage points of
+   unemployment, over all months and without the Covid period (forecasts for
+   March 2020 to December 2021). The jump of April 2020 could not be forecast
+   by any model and dominates the error when it is included.
+5. **Uncertainty.** Forecast errors of neighbouring months are related, because
+   12-month windows overlap. We therefore resample the months in blocks of 24
+   consecutive months, 2,000 times, and report the central 95% of the values.
+
+### Limits
+
+- The intervals are wide. There are only a few recessions in 35 years, and they
+  account for most of the error, so differences between methods are hard to
+  establish.
+- We use one release of the data. Many series are revised after their first
+  publication and are published with a delay, so a forecaster at the time had
+  slightly different and older numbers.
+- Our result differs from the one of Buckmann and Joseph (2022). Their study
+  uses a different selection and preparation of the inputs, other models and a
+  different evaluation period. Our experiment is not a replication of theirs
+  and does not show that their result is wrong.
+- Only one black box and one way of preparing the inputs were tried. We did not
+  search for a setting in which the black box wins, because choosing the
+  protocol after seeing the test errors would bias the comparison.
+
 ## E3: do equally accurate models give the same explanation?
 
 Script: `src/e3_rashomon.py`

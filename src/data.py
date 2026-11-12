@@ -5,6 +5,7 @@ The raw files are saved in the local `data/` folder, which is not committed.
 
 import urllib.request
 
+import numpy as np
 import pandas as pd
 
 from common import DATA_DIR
@@ -77,20 +78,56 @@ def load_compas():
     return data
 
 
-UNRATE_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE"
-
-# The series is cut at a fixed month so that results do not change when FRED
-# adds new months. September 2025 is the last month before a gap in the series
+# FRED-MD is a panel of about 126 monthly US macroeconomic series maintained by
+# the Federal Reserve Bank of St. Louis (McCracken and Ng, 2016). We use one
+# fixed monthly release ("vintage") so that the numbers never change.
+FRED_MD_URL = ("https://www.stlouisfed.org/-/media/project/frbstl/stlouisfed/"
+               "research/fred-md/monthly/2026-09-md.csv")
+FRED_MD_FIRST_MONTH = "1960-01"
+# September 2025 is the last month before a gap in the unemployment rate
 # (no value was published for October 2025).
-UNRATE_FIRST_MONTH = "1948-01"
-UNRATE_LAST_MONTH = "2025-09"
+FRED_MD_LAST_MONTH = "2025-09"
 
 
-def load_unrate():
-    """Monthly US unemployment rate in percent (FRED series UNRATE), indexed by month."""
-    raw = pd.read_csv(download(UNRATE_URL, "UNRATE.csv"))
-    series = pd.Series(raw["UNRATE"].to_numpy(),
-                       index=pd.PeriodIndex(raw["observation_date"], freq="M"), name="unrate")
-    series = series.loc[UNRATE_FIRST_MONTH:UNRATE_LAST_MONTH]
-    assert series.notna().all(), "missing month in the selected period"
-    return series
+def _transform(x, code):
+    """Standard FRED-MD transformation that makes a series stable over time.
+
+    The code of each series is given in the second line of the file:
+    1 = no change, 2 = monthly change, 3 = change of the monthly change,
+    4 = logarithm, 5 = monthly growth rate (change of the logarithm),
+    6 = change of the growth rate, 7 = change of the percentage change.
+    """
+    if code == 1:
+        return x
+    if code == 2:
+        return x.diff()
+    if code == 3:
+        return x.diff().diff()
+    if code == 4:
+        return np.log(x)
+    if code == 5:
+        return np.log(x).diff()
+    if code == 6:
+        return np.log(x).diff().diff()
+    if code == 7:
+        return x.pct_change().diff()
+    raise ValueError(f"unknown transformation code {code}")
+
+
+def load_fred_md():
+    """Return (unemployment rate, transformed panel), both indexed by month.
+
+    The panel keeps the series that have no missing value between January 1960
+    and September 2025 after transformation (119 of the 126 series).
+    """
+    raw = pd.read_csv(download(FRED_MD_URL, "fred-md-2026-09.csv"))
+    codes = raw.iloc[0, 1:].astype(int)
+    values = raw.iloc[1:].dropna(subset=["sasdate"])
+    values.index = pd.PeriodIndex(pd.to_datetime(values["sasdate"], format="%m/%d/%Y"), freq="M")
+    values = values.drop(columns="sasdate").astype(float)
+
+    panel = pd.DataFrame({name: _transform(values[name], codes[name]) for name in values.columns})
+    panel = panel.loc[FRED_MD_FIRST_MONTH:FRED_MD_LAST_MONTH]
+    panel = panel.loc[:, panel.notna().all()]
+    unrate = values.loc[FRED_MD_FIRST_MONTH:FRED_MD_LAST_MONTH, "UNRATE"]
+    return unrate, panel

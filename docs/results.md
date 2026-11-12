@@ -55,6 +55,66 @@ trees with two leaves each. Such a model adds up one effect per variable and
 does not combine variables. The data therefore do not reward a more complex
 model.
 
+## E2: does the black box win on a forecasting problem?
+
+Change in the US unemployment rate over 12 months, 429 forecasts from January
+1990 to September 2025. Errors are in percentage points of unemployment. Run
+time: about 1 minute.
+
+| Method | Kind | RMSE, all months | RMSE, without Covid period |
+|---|---|---|---|
+| Naive (no change) | baseline | 1.52 [0.73, 2.30] | 0.96 [0.66, 1.33] |
+| Autoregressive model | interpretable | 1.82 [0.63, 3.00] | 0.82 [0.58, 1.12] |
+| Sparse linear model | interpretable | 1.53 [0.70, 2.33] | 0.93 [0.60, 1.32] |
+| Gradient boosting | black box | 1.51 [0.76, 2.23] | 0.97 [0.64, 1.22] |
+
+Gap in RMSE without the Covid period (negative means the first method is
+better):
+
+| Comparison | RMSE gap |
+|---|---|
+| Gradient boosting minus sparse linear model | 0.04 [-0.18, 0.25] |
+| Gradient boosting minus autoregressive model | 0.15 [-0.03, 0.30] |
+| Gradient boosting minus naive | 0.01 [-0.19, 0.20] |
+| Sparse linear model minus naive | -0.03 [-0.11, 0.03] |
+
+What the numbers show:
+
+- The black box does not win. Outside the Covid period its error (0.97) is no
+  lower than that of the sparse linear model (0.93) or of the autoregressive
+  model (0.82), which uses the unemployment rate alone.
+- No difference is established. Every interval of a gap contains zero. The
+  honest reading is that this experiment cannot rank the methods, not that the
+  simple models are better.
+- No method clearly beats the naive forecast. Forecasting unemployment a year
+  ahead is hard for every model: the forecasts follow the turning points with a
+  delay instead of announcing them.
+- With all months included, the Covid jump of April 2020 dominates the error
+  and the intervals become too wide to compare anything.
+- After the Covid period, the forecasts of the gradient boosting stay well above
+  the observed rate from 2023 to 2025, while the sparse linear model comes back
+  to it. The extreme values of 2020 entered the training data, and the black
+  box gives no direct way to see how they changed it.
+
+The interpretable models can be read in full. Fitted on all the data, the sparse
+linear model uses 5 of the 120 inputs. The effect of a one-standard-deviation
+rise of each input on the forecast change is:
+
+```
+change over the next 12 months = 0.473
+    - 0.126  unemployment rate (level)
+    - 0.107  5-year Treasury rate minus federal funds rate
+    - 0.085  real M2 money stock (growth)
+    - 0.057  1-year Treasury rate minus federal funds rate
+    - 0.056  3-month Treasury bill rate minus federal funds rate
+```
+
+In words: unemployment tends to fall when it is high, and to rise after
+long-term rates have fallen below the policy rate, a known recession signal.
+The gradient boosting gives its largest SHAP values to the same two inputs (the
+5-year rate spread and the unemployment level), followed by employment series.
+It is a sum of 300 trees over 41 inputs and cannot be read directly.
+
 ## E3: do equally accurate models give the same explanation?
 
 COMPAS data, 1,852 people in the test set. Run time: under 1 minute.

@@ -25,7 +25,7 @@ In this project a model counts as interpretable if it uses at most 10 variables
 | | Question | Data | Models |
 |---|---|---|---|
 | E1 | What does interpretability cost in accuracy? | COMPAS recidivism data (ProPublica) | Sparse logistic regression, small decision tree, gradient boosting |
-| E2 | Does the black box win in forecasting? | Monthly US unemployment rate (FRED series UNRATE) | Naive forecast, autoregressive model, gradient boosting on the same lags |
+| E2 | Does the black box win in forecasting? | US unemployment rate 12 months ahead, FRED-MD panel of monthly macroeconomic series | Naive forecast, autoregressive model, sparse linear model, gradient boosting |
 | E3 | Do equally accurate models give the same explanation? | Same as E1 | 50 gradient boosting models with nearly the same accuracy |
 
 The protocol is described in [docs/methodology.md](docs/methodology.md) and the
@@ -36,7 +36,7 @@ results in [docs/results.md](docs/results.md).
 | Experiment | Script | State |
 |---|---|---|
 | E1 | `src/e1_compas.py` | done |
-| E2 | `src/e2_forecast.py` | to come |
+| E2 | `src/e2_forecast.py` | done |
 | E3 | `src/e3_rashomon.py` | done |
 
 Each script downloads its data if needed, prints its result tables and writes
