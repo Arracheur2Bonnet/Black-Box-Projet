@@ -6,7 +6,8 @@ the best one, and explain each of them with SHAP. We then measure how much the
 50 explanations agree, for the data set as a whole and for each person.
 
 Run:  python src/e3_rashomon.py
-Writes outputs/e3_summary.csv, e3_ranks.csv, e3_example.csv and e3_figure.png.
+Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv, e3_example.csv
+and e3_figure.png.
 """
 
 import itertools
@@ -19,7 +20,7 @@ import numpy as np
 import pandas as pd
 import shap
 from lightgbm import LGBMClassifier
-from scipy.stats import kendalltau
+from scipy.stats import kendalltau, rankdata
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -94,7 +95,9 @@ def main():
 
     # Global explanation of a model: variables ranked by mean absolute SHAP value.
     importance = np.abs(shap_all).mean(axis=1)                     # (models, variables)
-    ranks = (-importance).argsort(axis=1).argsort(axis=1) + 1      # 1 = most important
+    # Rank 1 = most important. A variable that a model never uses has an
+    # importance of exactly zero; such variables share the last rank.
+    ranks = rankdata(-importance, axis=1, method="max").astype(int)
     pairs = list(itertools.combinations(range(len(models)), 2))
     taus = np.array([kendalltau(importance[a], importance[b]).statistic for a, b in pairs])
 
@@ -138,6 +141,12 @@ def main():
         index=COMPAS_FEATURES)
     rank_table.index.name = "variable"
     rank_table.to_csv(OUTPUT_DIR / "e3_ranks.csv")
+
+    # The ranking given by each of the 50 models, with its test AUC.
+    model_ranks = pd.DataFrame(ranks, columns=COMPAS_FEATURES)
+    model_ranks.insert(0, "auc", kept_aucs.round(4))
+    model_ranks.insert(0, "model", np.arange(1, len(models) + 1))
+    model_ranks.to_csv(OUTPUT_DIR / "e3_model_ranks.csv", index=False)
 
     # ---- 3. One person, two models, two explanations ------------------------------
     # Among the people whose top variable differs between two models, take the

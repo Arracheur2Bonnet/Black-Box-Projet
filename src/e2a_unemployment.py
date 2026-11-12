@@ -1,4 +1,4 @@
-"""Experiment 2: does the black box win on a forecasting problem?
+"""Experiment 2a: does the black box win at forecasting unemployment?
 
 Task: forecast the change in the US unemployment rate over the next 12 months,
 as in the Bank of England study of Buckmann and Joseph (2022), using the
@@ -14,9 +14,9 @@ Four forecasters are compared on the same months:
 Evaluation uses a rolling origin: every forecast is made by a model fitted only
 on data that were available 12 months before the month being forecast.
 
-Run:  python src/e2_forecast.py
-Writes outputs/e2_results.csv, e2_gaps.csv, e2_forecasts.csv, e2_models.txt
-and e2_figure.png.
+Run:  python src/e2a_unemployment.py
+Writes outputs/e2a_results.csv, e2a_gaps.csv, e2a_forecasts.csv, e2a_models.txt
+and e2a_figure.png.
 """
 
 import warnings
@@ -169,7 +169,7 @@ def main():
         row.update({m: y[origin] + predicted_change[m] for m in METHODS})
         rows.append(row)
     forecasts = pd.DataFrame(rows)
-    forecasts.round(4).to_csv(OUTPUT_DIR / "e2_forecasts.csv", index=False)
+    forecasts.round(4).to_csv(OUTPUT_DIR / "e2a_forecasts.csv", index=False)
 
     # ---- 2. Errors, with and without the Covid period ------------------------------------
     covid = forecasts["month"].between(COVID_FIRST, COVID_LAST).to_numpy()
@@ -197,8 +197,8 @@ def main():
                              "rmse_gap": rmse(e[first]) - rmse(e[second]),
                              "rmse_gap_low": low, "rmse_gap_high": high})
     results, gaps = pd.DataFrame(result_rows), pd.DataFrame(gap_rows)
-    results.round(4).to_csv(OUTPUT_DIR / "e2_results.csv", index=False)
-    gaps.round(4).to_csv(OUTPUT_DIR / "e2_gaps.csv", index=False)
+    results.round(4).to_csv(OUTPUT_DIR / "e2a_results.csv", index=False)
+    gaps.round(4).to_csv(OUTPUT_DIR / "e2a_gaps.csv", index=False)
 
     # ---- 3. The models in readable form (fitted on all the data) ----------------------------
     known = slice(0, len(y) - HORIZON)
@@ -228,7 +228,7 @@ def main():
     lines += [f"    {importance[j]:.3f} for {names[j]}" for j in top]
     lines += ["settings chosen over the yearly refits: "
               + ", ".join(f"{k}: {n} times" for k, n in pd.Series([c[1] for c in chosen]).value_counts().items())]
-    (OUTPUT_DIR / "e2_models.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (OUTPUT_DIR / "e2a_models.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     pd.set_option("display.width", 200)
     print("\nForecast errors in percentage points of unemployment (95% block-bootstrap intervals)")
@@ -274,7 +274,7 @@ def make_figure(forecasts, results):
     ax.spines[["top", "right"]].set_visible(False)
 
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / "e2_figure.png", dpi=200)
+    fig.savefig(OUTPUT_DIR / "e2a_figure.png", dpi=200)
     plt.close(fig)
 
 

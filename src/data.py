@@ -131,3 +131,32 @@ def load_fred_md():
     panel = panel.loc[:, panel.notna().all()]
     unrate = values.loc[FRED_MD_FIRST_MONTH:FRED_MD_LAST_MONTH, "UNRATE"]
     return unrate, panel
+
+
+# Half-hourly electricity demand of the state of Victoria (Australia). This is
+# the `vic_elec` data set of the R package tsibbledata, used in the textbook
+# "Forecasting: Principles and Practice" (Hyndman and Athanasopoulos). We read a
+# CSV copy published with the skforecast library, pinned to one fixed version.
+VIC_ELEC_URL = ("https://raw.githubusercontent.com/skforecast/skforecast-datasets/"
+                "76b77809772e1dec76501a0b1bf2748efe232702/data/vic_electricity.csv")
+
+
+def load_vic_electricity():
+    """Return the Victoria electricity data, one row per half-hour from 2012 to 2014.
+
+    Columns: `time` (local Melbourne time), `demand` (electricity demand, in MWh
+    according to the source), `temperature` (Melbourne, degrees Celsius) and
+    `holiday` (1 on public holidays in Victoria).
+    """
+    raw = pd.read_csv(download(VIC_ELEC_URL, "vic_electricity.csv"))
+    time = pd.to_datetime(raw["Time"], utc=True).dt.tz_convert("Australia/Melbourne")
+    data = pd.DataFrame({
+        "time": time,
+        "demand": raw["Demand"],
+        "temperature": raw["Temperature"],
+        "holiday": raw["Holiday"].astype(int),
+    })
+    assert len(data) == 52608 and data.notna().all().all()
+    assert (time.diff().dropna() == pd.Timedelta("30min")).all(), "the series must be regular"
+    return data
+

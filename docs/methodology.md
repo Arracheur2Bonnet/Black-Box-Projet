@@ -89,15 +89,17 @@ the 2019 version.
 - The intervals reflect the uncertainty from the people sampled, not the
   variation between two trainings of the same model.
 
-## E2: does the black box win on a forecasting problem?
+## E2a: does the black box win at forecasting unemployment?
 
-Script: `src/e2_forecast.py`
+Script: `src/e2a_unemployment.py`
 
 ### Task and data
 
 We forecast the change in the US unemployment rate over the next 12 months.
 The task follows the Bank of England study of Buckmann and Joseph (2022), who
-report that machine learning models beat linear models on it.
+report lower errors for machine learning models than for linear models on it.
+In their results the gap with a simple autoregressive model is not significant
+at the 5% level.
 
 The data are the FRED-MD panel of the Federal Reserve Bank of St. Louis
 (McCracken and Ng, 2016): 126 monthly US macroeconomic series (output, labour
@@ -162,6 +164,96 @@ criterion for an interpretable model.
   search for a setting in which the black box wins, because choosing the
   protocol after seeing the test errors would bias the comparison.
 
+## E2b: does the black box win at forecasting electricity demand?
+
+Script: `src/e2b_electricity.py`
+
+### Why this problem
+
+E1 and E2a did not show any advantage for the black box. We therefore added a
+problem on which a black box is expected to do well, and we wrote this
+expectation down before running the experiment. Electricity demand depends on
+temperature in a non-linear way: it rises when it is cold (heating) and when it
+is hot (air conditioning). This effect is not the same at every time of day or
+on every type of day, and the data contain tens of thousands of observations. A
+linear model with ten variables cannot represent such combined effects, whereas
+a flexible model can. The result of E2a is kept whatever E2b shows.
+
+### Task and data
+
+The data are the half-hourly electricity demand of the state of Victoria
+(Australia) from 2012 to 2014, with the temperature in Melbourne and the public
+holidays: 52,608 half-hours. This is the `vic_elec` data set used in the
+textbook of Hyndman and Athanasopoulos, *Forecasting: Principles and Practice*.
+
+Once a day, each model forecasts the demand of each of the next 48 half-hours.
+All models receive the same information:
+
+- the time of day, the day of the week, whether the day is a working day
+  (neither a weekend nor a public holiday) and whether the day before was one;
+- the temperature at the time being forecast and at the same time the day
+  before;
+- the demand at the same time the day before and one week before, and the
+  average demand of the day before.
+
+### Methods compared
+
+| Method | Kind | What can be read |
+|---|---|---|
+| Naive: demand of the same half-hour one week earlier | baseline | |
+| Linear regression with 9 variables | interpretable | one coefficient per variable |
+| Additive model | readable curve by curve | one curve per input |
+| Gradient boosting (LightGBM) | black box | nothing directly |
+
+- **Linear regression.** A straight line cannot bend, so temperature enters
+  through heating degrees and cooling degrees (how far the temperature is below
+  or above 18 °C), the usual hand-made transformation. The time of day is not
+  given as such: one coefficient per half-hour would need 47 more variables,
+  above our limit of 10. It is carried by the past demand at the same
+  half-hour.
+- **Additive model.** It is a gradient boosting in which every tree has only two
+  leaves and therefore looks at one input. The model is then a sum of nine
+  curves, one per input, and each curve can be plotted and read. It can bend,
+  but it cannot represent an effect that depends on two inputs at once, for
+  example a temperature effect that differs between 3 a.m. and 6 p.m. This
+  model has no short formula, so it goes beyond our strict criterion. We
+  include it for two reasons. Rudin (2019) describes additive models as "a
+  known form of interpretable model", and additive models are an established
+  tool for electricity load forecasting (Fan and Hyndman, 2012). A linear
+  regression alone would understate what a readable model can do.
+- **Gradient boosting.** Its trees have several leaves and can combine inputs.
+
+### Protocol
+
+1. **Test year.** The models are evaluated on the whole year 2014 (365 days,
+   17,520 half-hours). They are refitted at the start of each month on all the
+   earlier data.
+2. **Settings chosen before the test year.** The number of trees of the additive
+   model (six candidates) and the size and number of trees of the gradient
+   boosting (six candidates) are chosen once, on the last eight weeks of 2013.
+   The linear regression has no setting.
+3. **Measures.** The mean absolute percentage error (MAPE), which is the average
+   error as a percentage of the actual demand, and the RMSE.
+4. **Uncertainty.** We resample the 365 test days in blocks of 7 consecutive
+   days, 2,000 times, and report the central 95% of the values.
+5. **Peaks.** We also report the errors on the 1% of half-hours with the highest
+   demand (175 half-hours). This table was added after looking at the forecasts
+   of the hottest week, so it is a description and not a planned test.
+
+### Limits
+
+- The temperature of the forecast day is taken as known, as if the weather
+  forecast were perfect. All models receive it, but real errors would be larger,
+  and a model that relies more on temperature would suffer more.
+- The data cover one region and three years, and the test covers one year.
+- The readable models were kept simple on purpose. Richer additive models, with
+  a few chosen combinations of inputs, exist and were not tested; they might
+  come closer to the black box.
+- The problem was chosen because the black box was expected to win. The result
+  shows that such problems exist. It does not say how common they are.
+- A demand forecast is not a decision about a person. The stakes that motivate
+  the argument of Rudin (justice, credit, health care) are of another kind.
+
 ## E3: do equally accurate models give the same explanation?
 
 Script: `src/e3_rashomon.py`
@@ -188,7 +280,8 @@ model, just as accurate, would have given the same explanation.
 5. We compare the 50 explanations at two levels.
    - **Whole data set.** Variables are ranked by their average absolute SHAP
      value. Two rankings are compared with Kendall's tau, which goes from 1
-     (same order) to -1 (reversed order).
+     (same order) to -1 (reversed order). A variable that a model does not use
+     at all has an importance of zero and is ranked last.
    - **One person.** We look at the variable with the largest SHAP value for
      that person, and at whether a variable clearly raises the risk in one model
      and clearly lowers it in another (effects below 0.1 in absolute value are
@@ -207,3 +300,30 @@ model, just as accurate, would have given the same explanation.
 - With seven inputs, of which two dominate, there is little room for rankings to
   differ. A data set with many correlated inputs would be a harder test.
 - SHAP describes what a model does, not what causes re-arrest.
+
+## References
+
+- Angelino, E., Larus-Stone, N., Alabi, D., Seltzer, M. and Rudin, C. (2018).
+  Learning certifiably optimal rule lists for categorical data. *Journal of
+  Machine Learning Research* 18(234), 1–78.
+- Bao, M. et al. (2021). It's COMPASlicated: the messy relationship between RAI
+  datasets and algorithmic fairness benchmarks. *NeurIPS Datasets and
+  Benchmarks*.
+- Barenstein, M. (2019). ProPublica's COMPAS data revisited. arXiv:1906.04711.
+- Buckmann, M. and Joseph, A. (2023). An interpretable machine learning workflow
+  with an application to economic forecasting. *International Journal of
+  Central Banking* 19(4), 449–522. First published as Bank of England Staff
+  Working Paper No. 984 (2022).
+- Fan, S. and Hyndman, R. J. (2012). Short-term load forecasting based on a
+  semi-parametric additive model. *IEEE Transactions on Power Systems* 27(1),
+  134–141.
+- Hyndman, R. J. and Athanasopoulos, G. (2021). *Forecasting: Principles and
+  Practice*, 3rd edition. OTexts.
+- Lundberg, S. and Lee, S.-I. (2017). A unified approach to interpreting model
+  predictions. *Advances in Neural Information Processing Systems* 30.
+- McCracken, M. W. and Ng, S. (2016). FRED-MD: a monthly database for
+  macroeconomic research. *Journal of Business & Economic Statistics* 34(4),
+  574–589.
+- Rudin, C. (2019). Stop explaining black box machine learning models for high
+  stakes decisions and use interpretable models instead. *Nature Machine
+  Intelligence* 1, 206–215.
