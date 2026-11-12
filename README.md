@@ -37,7 +37,7 @@ results in [docs/results.md](docs/results.md).
 |---|---|---|
 | E1 | `src/e1_compas.py` | done |
 | E2 | `src/e2_forecast.py` | to come |
-| E3 | `src/e3_rashomon.py` | to come |
+| E3 | `src/e3_rashomon.py` | done |
 
 Each script downloads its data if needed, prints its result tables and writes
 its figure in `outputs/`. For example: `python src/e1_compas.py`.

@@ -88,3 +88,49 @@ the 2019 version.
   window of the ProPublica file.
 - The intervals reflect the uncertainty from the people sampled, not the
   variation between two trainings of the same model.
+
+## E3: do equally accurate models give the same explanation?
+
+Script: `src/e3_rashomon.py`
+
+### Idea
+
+For one data set there are usually many different models with almost the same
+accuracy. This is called the Rashomon effect. If a black box is explained after
+the fact, the explanation describes one of these models. E3 asks whether another
+model, just as accurate, would have given the same explanation.
+
+### Protocol
+
+1. The COMPAS data of E1 are split once: 70% to train, 30% (1,852 people) to
+   test.
+2. We train 200 gradient boosting models on the same training data. Each has
+   settings drawn at random (size and number of trees, learning rate, share of
+   rows and of variables used by each tree) and its own random seed.
+3. A model is "nearly as good as the best" if its test AUC is within 0.01 of the
+   best one. We draw 50 of these models at random.
+4. Each of the 50 models is explained with SHAP. For one person, the SHAP value
+   of a variable says how much that variable pushed the prediction of this model
+   above or below its average prediction.
+5. We compare the 50 explanations at two levels.
+   - **Whole data set.** Variables are ranked by their average absolute SHAP
+     value. Two rankings are compared with Kendall's tau, which goes from 1
+     (same order) to -1 (reversed order).
+   - **One person.** We look at the variable with the largest SHAP value for
+     that person, and at whether a variable clearly raises the risk in one model
+     and clearly lowers it in another (effects below 0.1 in absolute value are
+     ignored).
+6. We also compare the predictions themselves: the gap between the highest and
+   the lowest risk given to the same person by the 50 models, and whether the
+   yes/no prediction changes.
+
+### Limits
+
+- The 50 models belong to one family (gradient boosting). Other families could
+  disagree more.
+- The models are selected on the same test set that is used to compare them.
+  This is acceptable here because we do not report their accuracy as a result;
+  we only need them to be about equally accurate.
+- With seven inputs, of which two dominate, there is little room for rankings to
+  differ. A data set with many correlated inputs would be a harder test.
+- SHAP describes what a model does, not what causes re-arrest.

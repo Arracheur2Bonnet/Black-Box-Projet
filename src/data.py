@@ -75,3 +75,22 @@ def load_compas():
         "two_year_recid": raw["two_year_recid"],
     })
     return data
+
+
+UNRATE_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE"
+
+# The series is cut at a fixed month so that results do not change when FRED
+# adds new months. September 2025 is the last month before a gap in the series
+# (no value was published for October 2025).
+UNRATE_FIRST_MONTH = "1948-01"
+UNRATE_LAST_MONTH = "2025-09"
+
+
+def load_unrate():
+    """Monthly US unemployment rate in percent (FRED series UNRATE), indexed by month."""
+    raw = pd.read_csv(download(UNRATE_URL, "UNRATE.csv"))
+    series = pd.Series(raw["UNRATE"].to_numpy(),
+                       index=pd.PeriodIndex(raw["observation_date"], freq="M"), name="unrate")
+    series = series.loc[UNRATE_FIRST_MONTH:UNRATE_LAST_MONTH]
+    assert series.notna().all(), "missing month in the selected period"
+    return series

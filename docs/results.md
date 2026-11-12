@@ -54,3 +54,51 @@ The setting selected for the gradient boosting is the simplest of its grid: 300
 trees with two leaves each. Such a model adds up one effect per variable and
 does not combine variables. The data therefore do not reward a more complex
 model.
+
+## E3: do equally accurate models give the same explanation?
+
+COMPAS data, 1,852 people in the test set. Run time: under 1 minute.
+
+Of the 200 models trained, 144 are within 0.01 AUC of the best one (0.728). The
+50 models kept have a test AUC between 0.719 and 0.728.
+
+| Level | Measure | Value |
+|---|---|---|
+| Whole data set | Median Kendall tau between the SHAP rankings of two models | 0.90 |
+| Whole data set | Lowest Kendall tau between two models | 0.62 |
+| Whole data set | Variables ranked first by at least one model | 1 (number of priors) |
+| One person | People with the same top variable in all 50 models | 64% |
+| One person | People with a variable whose effect clearly changes sign between models | 11% |
+| Prediction | Median gap between the highest and lowest risk given to one person | 0.17 |
+| Prediction | People whose yes/no prediction differs between models | 23% |
+
+Number of models, out of 50, that give each importance rank to each variable:
+
+| Variable | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| Number of priors | 50 | | | | | | |
+| Age | | 50 | | | | | |
+| Felony charge | | | 44 | 5 | | | 1 |
+| Male | | | 3 | 42 | 4 | 1 | |
+| Other juvenile offenses | | | 3 | 3 | 44 | | |
+| Juvenile misdemeanors | | | | | | 27 | 23 |
+| Juvenile felonies | | | | | 2 | 22 | 26 |
+
+What the numbers show:
+
+- For the data set as a whole, the 50 models tell the same story: the number of
+  priors comes first and age second in every model. The disagreement is limited
+  to the less important variables.
+- For one person, the story is less stable. For 36% of people, the 50 models do
+  not agree on which variable matters most.
+- The predictions themselves differ. For 23% of people, some of these equally
+  accurate models predict re-arrest and others do not, and the risk given to a
+  typical person varies by 0.17 from one model to another.
+
+One example from the test set: a 61-year-old man with 20 priors and a
+non-felony charge. Model A (AUC 0.727) gives him a risk of 0.65 and its largest
+SHAP value is the number of priors (+1.94 against -1.00 for age). Model B (AUC
+0.721) gives him a risk of 0.34 and its largest SHAP value is age (-1.33 against
++1.18 for priors). Both explanations are faithful to their own model, and the
+two models are equally accurate, yet they reach opposite conclusions for this
+person.
