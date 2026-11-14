@@ -68,7 +68,9 @@ python src/e1_compas.py
 ```
 
 Each script downloads its data if needed, prints its result tables and writes
-its figure and result files in `outputs/`. Every random step uses the seed set
+its figure and result files in `outputs/`. Once the four experiments have
+run, `python src/report_figures.py` draws the figures of the written report
+from these result files. Every random step uses the seed set
 in `src/common.py`, so two runs give the same numbers.
 
 ## Repository layout
@@ -78,6 +80,7 @@ requirements.txt    pinned library versions
 src/common.py       seed, folders, bootstrap helpers
 src/data.py         download and preparation of the data sets
 src/e*.py           one script per experiment
+src/report_figures.py   figures of the written report
 docs/               methodology and results
 ```
 

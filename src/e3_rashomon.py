@@ -168,6 +168,9 @@ def main():
         "SHAP in model B": shap_all[b, j].round(3),
     })
     example.to_csv(OUTPUT_DIR / "e3_example.csv", index=False)
+    pd.DataFrame({"model": ["A", "B"], "auc": [round(kept_aucs[a], 3), round(kept_aucs[b], 3)],
+                  "predicted_risk": [round(probas[a, j], 2), round(probas[b, j], 2)]}
+                 ).to_csv(OUTPUT_DIR / "e3_example_models.csv", index=False)
     example_note = (f"model A: AUC {kept_aucs[a]:.3f}, predicted risk {probas[a, j]:.2f}; "
                     f"model B: AUC {kept_aucs[b]:.3f}, predicted risk {probas[b, j]:.2f}")
 
