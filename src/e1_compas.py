@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -90,18 +90,21 @@ def out_of_fold_scores(model, grid, X, y):
     model trained on the other 9. Inner loop: within those 9 parts, a 5-fold
     search picks the setting with the best AUC. The test part is never used to
     choose a setting.
+
+    Returns the scores and the setting chosen in each of the 10 outer folds.
     """
     outer = StratifiedKFold(n_splits=N_OUTER_FOLDS, shuffle=True, random_state=SEED)
     inner = StratifiedKFold(n_splits=N_INNER_FOLDS, shuffle=True, random_state=SEED + 1)
-    scores = np.zeros(len(y))
+    scores, chosen = np.zeros(len(y)), []
     for train, test in outer.split(X, y):
         search = GridSearchCV(model, grid, scoring="roc_auc", cv=inner)
         search.fit(X.iloc[train], y.iloc[train])
         scores[test] = search.predict_proba(X.iloc[test])[:, 1]
-    return scores
+        chosen.append(str(search.best_params_))
+    return scores, chosen
 
 
-def describe_final_models(models, X, y):
+def describe_final_models(models, X, y, chosen_in_folds):
     """Refit each model on all the data and write it down in readable form."""
     inner = StratifiedKFold(n_splits=N_INNER_FOLDS, shuffle=True, random_state=SEED + 1)
     lines = []
@@ -110,6 +113,9 @@ def describe_final_models(models, X, y):
         best = search.best_estimator_
         lines.append(f"== {name} ==")
         lines.append(f"chosen settings: {search.best_params_}")
+        counts = pd.Series(chosen_in_folds[name]).value_counts()
+        lines.append("settings chosen in the 10 outer folds: "
+                     + ", ".join(f"{setting}: {n} times" for setting, n in counts.items()))
         if name.startswith("Sparse"):
             # Coefficients are converted back to the original units, so that
             # "+0.15 per prior offense" can be read directly.
@@ -125,7 +131,10 @@ def describe_final_models(models, X, y):
             lines.append(f"number of leaves: {best.get_n_leaves()}")
         else:
             n_trees = best.n_estimators
-            lines.append(f"sum of {n_trees} trees with {best.num_leaves} leaves each: not readable directly")
+            lines.append(f"sum of {n_trees} trees with {best.num_leaves} leaves each: no short formula")
+            if best.num_leaves == 2:
+                lines.append("a tree with two leaves uses one variable, so this model adds one curve per variable "
+                             "and combines none: it is an additive model, of the kind counted as readable in E2b")
         lines.append("")
     return "\n".join(lines)
 
@@ -141,12 +150,13 @@ def main():
 
     # ---- 1. Scores of every method for every person -------------------------
     models = candidate_models()
-    kinds, scores, labels = {}, {}, {}
+    kinds, scores, labels, chosen = {}, {}, {}, {}
     for name, (kind, model, grid) in models.items():
         print(f"Cross-validating: {name}")
         kinds[name] = kind
-        scores[name] = out_of_fold_scores(model, grid, X, y)
+        scores[name], chosen[name] = out_of_fold_scores(model, grid, X, y)
         labels[name] = (scores[name] >= 0.5).astype(int)
+    trained = list(models)   # methods that give a probability: the Brier score applies to them only
 
     # References that are not trained on these data.
     name = "COMPAS score"
@@ -159,33 +169,50 @@ def main():
     labels[name] = rudin_rule(data)
     scores[name] = labels[name].astype(float)  # a rule gives yes/no, not a score
 
-    # ---- 2. Accuracy and AUC with bootstrap intervals -----------------------
+    # ---- 2. Accuracy, AUC and Brier score with bootstrap intervals ----------
+    # The Brier score is the mean squared gap between the predicted probability
+    # and the outcome (0 or 1); lower is better. It does not apply to the COMPAS
+    # score (1 to 10) nor to the rule list (yes or no), which give no probability.
     idx = bootstrap_indices(len(y_np), N_BOOTSTRAP)
-    boot = {name: {"auc": np.empty(N_BOOTSTRAP), "accuracy": np.empty(N_BOOTSTRAP)} for name in scores}
+    boot = {name: {"auc": np.empty(N_BOOTSTRAP), "accuracy": np.empty(N_BOOTSTRAP),
+                   "brier": np.full(N_BOOTSTRAP, np.nan)} for name in scores}
     for b, rows in enumerate(idx):
         for name in scores:
             boot[name]["auc"][b] = roc_auc_score(y_np[rows], scores[name][rows])
             boot[name]["accuracy"][b] = accuracy_score(y_np[rows], labels[name][rows])
+            if name in trained:
+                boot[name]["brier"][b] = brier_score_loss(y_np[rows], scores[name][rows])
 
     rows = []
     for name in scores:
         auc_low, auc_high = percentile_interval(boot[name]["auc"])
         acc_low, acc_high = percentile_interval(boot[name]["accuracy"])
+        if name in trained:
+            brier = brier_score_loss(y_np, scores[name])
+            brier_low, brier_high = percentile_interval(boot[name]["brier"])
+        else:
+            brier = brier_low = brier_high = np.nan
         rows.append({
             "model": name, "kind": kinds[name],
             "auc": roc_auc_score(y_np, scores[name]), "auc_low": auc_low, "auc_high": auc_high,
             "accuracy": accuracy_score(y_np, labels[name]), "accuracy_low": acc_low, "accuracy_high": acc_high,
+            "brier": brier, "brier_low": brier_low, "brier_high": brier_high,
         })
     results = pd.DataFrame(rows)
     baseline_accuracy = max(y.mean(), 1 - y.mean())  # always predict the most frequent outcome
 
     # ---- 3. Gap between the black box and every other method ----------------
+    # AUC and accuracy gaps: positive = the black box is better.
+    # Brier gap: negative = the black box is better (trained methods only).
     gap_rows = []
     for name in scores:
         if name == BLACK_BOX:
             continue
         row = {"comparison": f"{BLACK_BOX} minus {name}"}
-        for metric in ("auc", "accuracy"):
+        for metric in ("auc", "accuracy", "brier"):
+            if metric == "brier" and name not in trained:
+                row.update({"brier_gap": np.nan, "brier_gap_low": np.nan, "brier_gap_high": np.nan})
+                continue
             differences = boot[BLACK_BOX][metric] - boot[name][metric]
             point = (results.set_index("model").loc[BLACK_BOX, metric]
                      - results.set_index("model").loc[name, metric])
@@ -195,15 +222,15 @@ def main():
     gaps = pd.DataFrame(gap_rows)
 
     # ---- 4. Save and print ---------------------------------------------------
-    results.round(4).to_csv(OUTPUT_DIR / "e1_results.csv", index=False)
-    gaps.round(4).to_csv(OUTPUT_DIR / "e1_gaps.csv", index=False)
-    (OUTPUT_DIR / "e1_models.txt").write_text(describe_final_models(models, X, y), encoding="utf-8")
+    results.round(6).to_csv(OUTPUT_DIR / "e1_results.csv", index=False)
+    gaps.round(6).to_csv(OUTPUT_DIR / "e1_gaps.csv", index=False)
+    (OUTPUT_DIR / "e1_models.txt").write_text(describe_final_models(models, X, y, chosen), encoding="utf-8")
 
     pd.set_option("display.width", 200)
     print("\nResults (95% bootstrap intervals)")
     print(results.round(3).to_string(index=False))
     print(f"\nBaseline accuracy (always predict no re-arrest): {baseline_accuracy:.3f}")
-    print("\nGaps (positive = the black box is better)")
+    print("\nGaps (AUC, accuracy: positive = the black box is better; Brier: negative = the black box is better)")
     print(gaps.round(3).to_string(index=False))
 
     make_figure(results, baseline_accuracy)

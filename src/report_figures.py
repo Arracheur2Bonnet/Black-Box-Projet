@@ -69,9 +69,9 @@ def bars_with_intervals(ax, rows, start, number_format):
     """
     for position, (label, color, value, low, high) in enumerate(reversed(rows)):
         ax.barh(position, value - start, left=start, color=color, height=0.62)
-        # 95% interval: drawn in white over the bar and in grey beyond it.
-        ax.plot([low, value], [position, position], color="white", linewidth=1.1)
-        ax.plot([value, high], [position, position], color=MUTE, linewidth=1.1)
+        # 95% interval: a grey line with a white edge, visible on any bar and in grey-scale print.
+        ax.plot([low, high], [position, position], color="white", linewidth=2.6, solid_capstyle="butt")
+        ax.plot([low, high], [position, position], color=MUTE, linewidth=1.0, solid_capstyle="butt")
         ax.text(high, position, "  " + number_format.format(value), va="center", fontsize=8.5,
                 fontweight="bold", color=BLACK_BOX)
     ax.set_yticks(range(len(rows)), [row[0] for row in reversed(rows)])
@@ -88,13 +88,13 @@ def figure_e1():
     rows = [(label, color, *results.loc[key, ["accuracy", "accuracy_low", "accuracy_high"]]) for key, label, color in spec]
     baseline = 0.545   # accuracy of always predicting "no new arrest"
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 2.0))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.85))
     bars_with_intervals(ax, rows, baseline, "{:.3f}")
     ax.set_xlim(baseline, 0.715)
     ax.set_xticks([baseline, 0.58, 0.62, 0.66, 0.70], ["0.545\nalways “no”", "0.58", "0.62", "0.66", "0.70"])
     ax.set_xlabel("accuracy on people the model has not seen")
     colour_key(ax, ((INTERPRETABLE, "interpretable", 0.0), (BLACK_BOX, "black box", 0.2),
-                    (REFERENCE, "reference, not trained here", 0.36)))
+                    (REFERENCE, "reference, not trained by us", 0.36)))
     fig.tight_layout(pad=0.4)
     save(fig, "fig1_e1_accuracy")
 
@@ -104,50 +104,57 @@ def figure_e2a():
     f = pd.read_csv(OUTPUT_DIR / "e2a_forecasts.csv")
     dates = pd.PeriodIndex(f["month"], freq="M").to_timestamp()
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.9))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.85))
     for start, end in (("1990-07", "1991-03"), ("2001-03", "2001-11"), ("2007-12", "2009-06")):
-        ax.axvspan(pd.Timestamp(start), pd.Timestamp(end), color="#F1EEE6", linewidth=0)
-    ax.axvspan(pd.Timestamp("2020-03"), pd.Timestamp("2021-12"), color="#F1EEE6", linewidth=0)
-    ax.plot(dates, f["actual"], color=REFERENCE, linewidth=2.6, label="actual rate")
-    ax.plot(dates, f["Sparse linear model"], color=INTERPRETABLE, linewidth=0.95, label="sparse linear model (interpretable)")
+        ax.axvspan(pd.Timestamp(start), pd.Timestamp(end), color="#F3F0E8", linewidth=0)
+    ax.axvspan(pd.Timestamp("2020-03"), pd.Timestamp("2021-12"), facecolor="none", edgecolor="#C9C1AE",
+               hatch="////", linewidth=0)
+    ax.text(pd.Timestamp("2021-01"), 2.7, "Covid", fontsize=7, color=MUTE, ha="center", va="bottom")
+    ax.annotate("Apr 2020: 14.8%", (pd.Timestamp("2020-04"), 12), xytext=(pd.Timestamp("2015-06"), 11.0),
+                fontsize=7, color=MUTE, ha="center", arrowprops={"arrowstyle": "->", "color": MUTE, "linewidth": 0.6})
+    ax.plot(dates, f["actual"], color="#8C8270", linewidth=2.4, label="actual rate")
+    ax.plot(dates, f["Autoregressive model"], color=ADDITIVE, linewidth=1.0, linestyle=(0, (3, 1.5)),
+            label="autoregression")
+    ax.plot(dates, f["Sparse linear model"], color=INTERPRETABLE, linewidth=0.95, label="sparse linear model")
     ax.plot(dates, f["Gradient boosting"], color=BLACK_BOX, linewidth=0.95, label="gradient boosting (black box)")
     ax.set_ylim(2.5, 12)
     ax.set_xlim(dates[0], dates[-1])
     ax.set_ylabel("unemployment rate (%)")
-    ax.legend(frameon=False, fontsize=8, loc="upper left", ncols=3, bbox_to_anchor=(-0.01, 1.2), handlelength=1.4,
-              columnspacing=1.4, labelcolor=MUTE)
+    ax.legend(frameon=False, fontsize=7.5, loc="upper left", ncols=4, bbox_to_anchor=(-0.01, 1.22), handlelength=1.6,
+              columnspacing=1.1, labelcolor=MUTE)
     fig.tight_layout(pad=0.4)
     save(fig, "fig2_e2a_unemployment")
 
 
 def figure_e2b():
-    """Forecast error on electricity demand, and the temperature curve of the additive model."""
+    """Forecast error on electricity demand, and what the regression per half-hour says about heat."""
     results = pd.read_csv(OUTPUT_DIR / "e2b_results.csv").set_index("method")
     spec = [("Naive (same time last week)", "Naive forecast", REFERENCE),
             ("Linear regression", "Linear regression, 9 variables", INTERPRETABLE),
             ("Additive model", "Additive model", ADDITIVE),
-            ("Gradient boosting", "Gradient boosting", BLACK_BOX)]
+            ("Gradient boosting", "Gradient boosting", BLACK_BOX),
+            ("Linear regression per half-hour", "Linear regression per half-hour", INTERPRETABLE),
+            ("Additive model per half-hour", "Additive model per half-hour", ADDITIVE)]
     rows = [(label, color, *results.loc[key, ["mape", "mape_low", "mape_high"]]) for key, label, color in spec]
-    curves = pd.read_csv(OUTPUT_DIR / "e2b_curves.csv")
-    curve = curves[(curves["input"] == "temperature") & (curves["half_hours"] >= 20)]
+    coefficients = pd.read_csv(OUTPUT_DIR / "e2b_halfhour_coefficients.csv")
 
-    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.0), gridspec_kw={"width_ratios": [1.55, 1]})
+    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.1), gridspec_kw={"width_ratios": [1.75, 1]})
     bars_with_intervals(left, rows, 0, "{:.1f}%")
+    left.axhline(1.5, color=MUTE, linewidth=0.6, linestyle=":")   # the two models below were added after review
     left.set_xlim(0, 10.6)
     left.set_xticks([0, 2, 4, 6, 8], ["0%", "2%", "4%", "6%", "8%"])
     left.set_xlabel("average forecast error (lower is better)")
     left.set_title("Error over the year 2014")
 
-    right.plot(curve["value"], curve["effect_on_demand"], color=ADDITIVE, linewidth=2)
-    right.axhline(0, color=MUTE, linewidth=0.5)
-    lowest = curve.loc[curve["effect_on_demand"].idxmin()]
-    right.annotate(f"lowest near {lowest['value']:.0f} °C", (lowest["value"], lowest["effect_on_demand"]),
-                   xytext=(lowest["value"] - 3, 1500), fontsize=7.5, color=MUTE, ha="center",
-                   arrowprops={"arrowstyle": "-", "color": MUTE, "linewidth": 0.6})
-    right.set_xlabel("temperature (°C)")
-    right.set_ylabel("effect on demand (MWh)")
+    hours = coefficients["half_hour"] / 2
+    right.plot(hours, coefficients["cooling_degrees"], color=INTERPRETABLE, linewidth=1.8)
+    right.set_xlim(0, 24)
+    right.set_xticks([0, 6, 12, 18, 24], ["0h", "6h", "12h", "18h", "24h"])
+    right.set_ylim(bottom=0)
+    right.set_xlabel("time of day")
+    right.set_ylabel("MWh per °C above 18 °C")
     right.tick_params(axis="y", colors=MUTE)
-    right.set_title("Effect of temperature")
+    right.set_title("Effect of heat, by hour")
     fig.tight_layout(pad=0.4, w_pad=1.6)
     save(fig, "fig3_e2b_electricity")
 
@@ -159,7 +166,7 @@ def figure_e3():
     example = pd.read_csv(OUTPUT_DIR / "e3_example.csv").set_index("variable")
     two_models = pd.read_csv(OUTPUT_DIR / "e3_example_models.csv").set_index("model")
 
-    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.15), gridspec_kw={"width_ratios": [1.25, 1]})
+    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 1.95), gridspec_kw={"width_ratios": [1.25, 1]})
     for row, variable in enumerate(order):
         for rank in range(1, 8):
             count = ranks.loc[variable, f"rank {rank}"]
@@ -185,7 +192,7 @@ def figure_e3():
               for v in reversed(shown)]
     right.set_yticks(range(len(shown)), labels)
     right.axvline(0, color=MUTE, linewidth=0.6)
-    right.set_xlabel("pushes the risk down   |   up")
+    right.set_xlabel("SHAP value, log-odds of re-arrest")
     right.set_title("One man, two models")
     right.tick_params(axis="x", colors=MUTE)
     colour_key(right, ((BLACK_BOX, f"model A: risk {two_models.loc['A', 'predicted_risk']:.2f}", -0.42),

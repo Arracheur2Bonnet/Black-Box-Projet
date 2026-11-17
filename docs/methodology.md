@@ -59,9 +59,13 @@ the 2019 version.
    versions, because a large boosting model overfits on about 6,000 rows and
    would make the black box look worse than it can be.
 3. **Measures.** AUC (the probability that a re-arrested person receives a
-   higher score than a person who was not re-arrested) and accuracy (share of
+   higher score than a person who was not re-arrested), accuracy (share of
    correct yes/no predictions, with a threshold of 0.5 for the trained models
-   and a score of 5 or more for COMPAS).
+   and a score of 5 or more for COMPAS) and, for the trained models only, the
+   Brier score (mean squared gap between the predicted probability and the
+   outcome; lower is better). The COMPAS score and the rule list give no
+   probability, so the Brier score does not apply to them. The setting chosen
+   in each of the 10 folds is recorded in `outputs/e1_models.txt`.
 4. **Uncertainty.** We resample the 6,172 people with replacement 2,000 times
    and recompute every measure and every gap on each resample. The interval
    reported is the central 95% of these values. If the interval of a gap
@@ -96,10 +100,10 @@ Script: `src/e2a_unemployment.py`
 ### Task and data
 
 We forecast the change in the US unemployment rate over the next 12 months.
-The task follows the Bank of England study of Buckmann and Joseph (2022), who
-report lower errors for machine learning models than for linear models on it.
-In their results the gap with a simple autoregressive model is not significant
-at the 5% level.
+The task follows the Bank of England study of Buckmann and Joseph (2023, first
+published as a working paper in 2022), who report lower errors for machine
+learning models than for linear models on it. In their results the advantage
+over a simple autoregressive model is not statistically significant.
 
 The data are the FRED-MD panel of the Federal Reserve Bank of St. Louis
 (McCracken and Ng, 2016): 126 monthly US macroeconomic series (output, labour
@@ -156,7 +160,7 @@ criterion for an interpretable model.
 - We use one release of the data. Many series are revised after their first
   publication and are published with a delay, so a forecaster at the time had
   slightly different and older numbers.
-- Our result differs from the one of Buckmann and Joseph (2022). Their study
+- Our result differs from the one of Buckmann and Joseph (2023). Their study
   uses a different selection and preparation of the inputs, other models and a
   different evaluation period. Our experiment is not a replication of theirs
   and does not show that their result is wrong.
@@ -203,14 +207,14 @@ All models receive the same information:
 | Naive: demand of the same half-hour one week earlier | baseline | |
 | Linear regression with 9 variables | interpretable | one coefficient per variable |
 | Additive model | readable curve by curve | one curve per input |
+| Linear regression per half-hour (added after review) | interpretable | 48 equations of 9 coefficients |
+| Additive model per half-hour (added after review) | readable map by map | one map (half-hour x input) per input |
 | Gradient boosting (LightGBM) | black box | nothing directly |
 
 - **Linear regression.** A straight line cannot bend, so temperature enters
   through heating degrees and cooling degrees (how far the temperature is below
   or above 18 °C), the usual hand-made transformation. The time of day is not
-  given as such: one coefficient per half-hour would need 47 more variables,
-  above our limit of 10. It is carried by the past demand at the same
-  half-hour.
+  given as such; it is carried by the past demand at the same half-hour.
 - **Additive model.** It is a gradient boosting in which every tree has only two
   leaves and therefore looks at one input. The model is then a sum of nine
   curves, one per input, and each curve can be plotted and read. It can bend,
@@ -221,17 +225,32 @@ All models receive the same information:
   known form of interpretable model", and additive models are an established
   tool for electricity load forecasting (Fan and Hyndman, 2012). A linear
   regression alone would understate what a readable model can do.
+- **Linear regression per half-hour.** The same 9 variables, but one equation
+  for each of the 48 half-hours of the day, so that every effect (heat, cold,
+  working day, past demand) may change with the time of day. Each equation
+  respects our limit of 10 variables. This is the structure of the load
+  forecasting models of Fan and Hyndman (2012), who fit a separate model for
+  each half-hour.
+- **Additive model per half-hour.** A gradient boosting whose trees have three
+  leaves and may only use the half-hour and one other input. The model is a sum
+  of eight maps, one per input, each showing how the effect of that input
+  changes with the time of day.
 - **Gradient boosting.** Its trees have several leaves and can combine inputs.
+
+The two models per half-hour were added after a review of the first version of
+this experiment, which compared the black box only with readable models that
+cannot let an effect change with the time of day. They were specified from the
+literature before being run, and their settings were chosen like the others.
 
 ### Protocol
 
 1. **Test year.** The models are evaluated on the whole year 2014 (365 days,
    17,520 half-hours). They are refitted at the start of each month on all the
    earlier data.
-2. **Settings chosen before the test year.** The number of trees of the additive
-   model (six candidates) and the size and number of trees of the gradient
-   boosting (six candidates) are chosen once, on the last eight weeks of 2013.
-   The linear regression has no setting.
+2. **Settings chosen before the test year.** The number of trees of the two
+   additive models (six candidates each) and the size and number of trees of
+   the gradient boosting (six candidates) are chosen once, on the last eight
+   weeks of 2013. The linear regressions have no setting.
 3. **Measures.** The mean absolute percentage error (MAPE), which is the average
    error as a percentage of the actual demand, and the RMSE.
 4. **Uncertainty.** We resample the 365 test days in blocks of 7 consecutive
@@ -246,11 +265,13 @@ All models receive the same information:
   forecast were perfect. All models receive it, but real errors would be larger,
   and a model that relies more on temperature would suffer more.
 - The data cover one region and three years, and the test covers one year.
-- The readable models were kept simple on purpose. Richer additive models, with
-  a few chosen combinations of inputs, exist and were not tested; they might
-  come closer to the black box.
+- The problem was added after E1 and E2a had shown no advantage for the black
+  box, and the two models per half-hour were added after a review. Both
+  additions follow the literature, but other readable models could do better
+  or worse.
 - The problem was chosen because the black box was expected to win. The result
-  shows that such problems exist. It does not say how common they are.
+  shows that the size of the cost of interpretability depends on the structure
+  given to the readable model. It does not say how common such problems are.
 - A demand forecast is not a decision about a person. The stakes that motivate
   the argument of Rudin (justice, credit, health care) are of another kind.
 
@@ -289,11 +310,26 @@ model, just as accurate, would have given the same explanation.
 6. We also compare the predictions themselves: the gap between the highest and
    the lowest risk given to the same person by the 50 models, and whether the
    yes/no prediction changes.
+7. **Control (added after review).** We repeat steps 2 to 6 with 200 sparse
+   logistic regressions, each with its own penalty and a random 50 to 90% of
+   the training rows. For a linear model, the contribution of a variable to one
+   prediction is its coefficient times the gap between the person's value and
+   the average value, which is also its exact SHAP value. If equally accurate
+   readable models disagree as much, the disagreement comes from the
+   multiplicity of good models (the Rashomon effect), not from post-hoc
+   explanations.
+8. **Uncertainty.** The shares of people are given with a 95% interval,
+   obtained by resampling the 1,852 test people 2,000 times.
+
+The example of one person shown in the figure is the most extreme disagreement
+found by searching all pairs of models and all people. It illustrates the
+effect; it does not measure it.
 
 ### Limits
 
-- The 50 models belong to one family (gradient boosting). Other families could
-  disagree more.
+- E3 does not test the fidelity of an explanation to its model: for a sum of
+  trees, SHAP values are computed exactly. It tests what the explanation of one
+  model says about other models that are just as accurate.
 - The models are selected on the same test set that is used to compare them.
   This is acceptable here because we do not report their accuracy as a result;
   we only need them to be about equally accurate.

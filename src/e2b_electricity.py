@@ -6,15 +6,23 @@ is cold, air conditioning when it is hot), this effect changes with the time of
 day and the type of day, and there are tens of thousands of observations.
 
 Task: once a day, forecast the demand of each of the next 48 half-hours in the
-state of Victoria (Australia). Four forecasters receive the same information:
+state of Victoria (Australia). Six forecasters receive the same information:
   - naive: the demand of the same half-hour one week earlier,
   - linear regression with 9 variables (interpretable),
   - additive model: one curve per input, readable curve by curve,
+  - linear regression per half-hour: 48 regressions with the same 9 variables,
+    one for each half-hour of the day (interpretable),
+  - additive model per half-hour: each curve may change with the time of day,
+    readable as one map per input,
   - gradient boosting, free to combine the inputs (black box).
+
+The two "per half-hour" models were added after a review of the first version
+of this experiment. They follow the structure of the load forecasting models of
+Fan and Hyndman (2012), who fit a separate model for each half-hour of the day.
 
 Run:  python src/e2b_electricity.py
 Writes outputs/e2b_results.csv, e2b_gaps.csv, e2b_peaks.csv, e2b_forecasts.csv,
-e2b_curves.csv, e2b_models.txt and e2b_figure.png.
+e2b_curves.csv, e2b_halfhour_coefficients.csv, e2b_models.txt and e2b_figure.png.
 """
 
 import warnings
@@ -28,7 +36,7 @@ import pandas as pd
 from lightgbm import LGBMRegressor
 
 from common import (COLOR_BLACK_BOX, COLOR_INTERPRETABLE, COLOR_REFERENCE, OUTPUT_DIR,
-                    SEED, percentile_interval)
+                    SEED, block_bootstrap_indices, percentile_interval)
 from data import load_vic_electricity
 
 PER_DAY = 48                    # half-hours in a forecast day
@@ -42,18 +50,19 @@ PEAK_SHARE = 0.01               # "peak" half-hours: the 1% with the highest dem
 
 NAIVE, LINEAR, ADDITIVE, GBM = ("Naive (same time last week)", "Linear regression",
                                 "Additive model", "Gradient boosting")
-METHODS = [NAIVE, LINEAR, ADDITIVE, GBM]
+LINEAR_HH, ADDITIVE_HH = "Linear regression per half-hour", "Additive model per half-hour"
+METHODS = [NAIVE, LINEAR, ADDITIVE, LINEAR_HH, ADDITIVE_HH, GBM]
 
 # Information given to the tree-based models (additive model and gradient boosting).
 TREE_INPUTS = ["half_hour", "day_of_week", "workday", "workday_yesterday",
                "temperature", "temperature_yesterday",
                "demand_yesterday", "demand_last_week", "demand_yesterday_mean"]
-# The linear regression receives the same information in a form a straight line
+# The linear regressions receive the same information in a form a straight line
 # can use. Temperature enters through heating and cooling degrees, the textbook
-# transformation, because a straight line cannot bend. The time of day and the
-# day of the week are carried by the past demand at the same half-hour: one
-# coefficient per half-hour would need 47 more variables, far above our limit
-# of 10 variables for an interpretable model.
+# transformation, because a straight line cannot bend. In the single regression,
+# the time of day and the day of the week are carried by the past demand at the
+# same half-hour. The regression per half-hour lets every coefficient change
+# with the time of day: each of its 48 equations uses the same 9 variables.
 LINEAR_INPUTS = ["workday", "workday_yesterday",
                  "heating_degrees", "cooling_degrees",
                  "heating_degrees_yesterday", "cooling_degrees_yesterday",
@@ -61,7 +70,9 @@ LINEAR_INPUTS = ["workday", "workday_yesterday",
 
 # Six candidate settings for each tree-based model. A tree with two leaves looks
 # at one input only, so a sum of such trees is a sum of one curve per input: an
-# additive model. Larger trees can combine several inputs.
+# additive model. In the additive model per half-hour, each tree has three leaves
+# and may only use the half-hour and one other input: the model is a sum of one
+# map (half-hour x input) per input. Larger trees can combine any inputs.
 ADDITIVE_TREES = [250, 500, 1000, 2000, 4000, 8000]
 GBM_GRID = [(leaves, trees) for leaves in (8, 31, 127) for trees in (300, 1000)]
 
@@ -107,8 +118,29 @@ def new_boosting(num_leaves, n_trees, learning_rate):
                          force_row_wise=True, verbose=-1)
 
 
+def new_additive_per_half_hour(n_trees):
+    """Boosting of three-leaf trees, each restricted to the half-hour (input 0) and one other input."""
+    assert TREE_INPUTS[0] == "half_hour"
+    return LGBMRegressor(num_leaves=3, n_estimators=n_trees, learning_rate=0.1, min_child_samples=20,
+                         interaction_constraints=[[0, j] for j in range(1, len(TREE_INPUTS))],
+                         random_state=SEED, n_jobs=1, deterministic=True, force_row_wise=True, verbose=-1)
+
+
+def fit_per_half_hour(X, y, half_hour):
+    """One linear regression for each half-hour of the day: a dict half-hour -> coefficients."""
+    return {h: fit_linear(X[half_hour == h], y[half_hour == h]) for h in range(PER_DAY)}
+
+
+def predict_per_half_hour(coefs, X, half_hour):
+    out = np.empty(len(X))
+    for h, coef in coefs.items():
+        rows = half_hour == h
+        out[rows] = predict_linear(coef, X[rows])
+    return out
+
+
 def choose_settings(X_fit, y_fit, X_val, y_val):
-    """Choose the settings of both tree-based models on the validation weeks.
+    """Choose the settings of the three tree-based models on the validation weeks.
 
     Boosting adds trees one after the other, so a model with 8,000 trees
     contains the model with 250 trees: we fit the largest one and read the
@@ -125,14 +157,10 @@ def choose_settings(X_fit, y_fit, X_val, y_val):
         trees = [n for l, n in GBM_GRID if l == leaves]
         largest = new_boosting(leaves, max(trees), 0.05).fit(X_fit, y_fit)
         gbm_scores.update({(leaves, n): validation_rmse(largest, n) for n in trees})
+    largest = new_additive_per_half_hour(max(ADDITIVE_TREES)).fit(X_fit, y_fit)
+    half_hour_scores = {n: validation_rmse(largest, n) for n in ADDITIVE_TREES}
     return (min(additive_scores, key=additive_scores.get), min(gbm_scores, key=gbm_scores.get),
-            additive_scores, gbm_scores)
-
-
-def block_bootstrap_days(n_days, rng):
-    """Resample days in blocks of consecutive days, to respect the dependence between nearby days."""
-    starts = rng.integers(0, n_days - BLOCK_DAYS + 1, size=int(np.ceil(n_days / BLOCK_DAYS)))
-    return np.concatenate([np.arange(s, s + BLOCK_DAYS) for s in starts])[:n_days]
+            min(half_hour_scores, key=half_hour_scores.get), additive_scores, gbm_scores, half_hour_scores)
 
 
 def main():
@@ -144,15 +172,18 @@ def main():
     day = d["day"].to_numpy()
     y = d["demand"].to_numpy()
     X_tree, X_lin = d[TREE_INPUTS].to_numpy(float), d[LINEAR_INPUTS].to_numpy(float)
+    half_hour = d["half_hour"].to_numpy()
     n_test_days = int(day.max()) - FIRST_TEST_DAY + 1
     print(f"{len(d)} half-hours; test: the {n_test_days} days of 2014 ({n_test_days * PER_DAY} half-hours)")
 
     # ---- 1. Settings chosen once, before the test year ---------------------------------
     fit_part = day < FIRST_TEST_DAY - VALIDATION_DAYS
     val_part = (day >= FIRST_TEST_DAY - VALIDATION_DAYS) & (day < FIRST_TEST_DAY)
-    additive_trees, (gbm_leaves, gbm_trees), additive_scores, gbm_scores = choose_settings(
+    (additive_trees, (gbm_leaves, gbm_trees), half_hour_trees,
+     additive_scores, gbm_scores, half_hour_scores) = choose_settings(
         X_tree[fit_part], y[fit_part], X_tree[val_part], y[val_part])
     print(f"Chosen on the last {VALIDATION_DAYS} days of 2013: additive model with {additive_trees} trees; "
+          f"additive model per half-hour with {half_hour_trees} trees; "
           f"gradient boosting with {gbm_trees} trees of {gbm_leaves} leaves")
 
     # ---- 2. Rolling origin: the models are refitted at the start of each month of 2014 ----
@@ -165,6 +196,10 @@ def main():
         past = day < day[target].min()                # everything before the month being forecast
         predictions[LINEAR][target] = predict_linear(fit_linear(X_lin[past], y[past]), X_lin[target])
         predictions[ADDITIVE][target] = new_boosting(2, additive_trees, 0.1).fit(
+            X_tree[past], y[past]).predict(X_tree[target])
+        predictions[LINEAR_HH][target] = predict_per_half_hour(
+            fit_per_half_hour(X_lin[past], y[past], half_hour[past]), X_lin[target], half_hour[target])
+        predictions[ADDITIVE_HH][target] = new_additive_per_half_hour(half_hour_trees).fit(
             X_tree[past], y[past]).predict(X_tree[target])
         predictions[GBM][target] = new_boosting(gbm_leaves, gbm_trees, 0.05).fit(
             X_tree[past], y[past]).predict(X_tree[target])
@@ -195,7 +230,7 @@ def main():
     rng = np.random.default_rng(SEED)
     boot = {m: {"rmse": np.empty(N_BOOTSTRAP), "mape": np.empty(N_BOOTSTRAP)} for m in METHODS}
     for b in range(N_BOOTSTRAP):
-        days = block_bootstrap_days(n_test_days, rng)
+        days = block_bootstrap_indices(n_test_days, BLOCK_DAYS, rng)
         for m in METHODS:
             boot[m]["rmse"][b], boot[m]["mape"][b] = rmse(m, days), mape(m, days)
 
@@ -209,7 +244,8 @@ def main():
     results = pd.DataFrame(result_rows)
 
     gap_rows = []
-    for first, second in ((GBM, ADDITIVE), (GBM, LINEAR), (ADDITIVE, LINEAR), (GBM, NAIVE)):
+    for first, second in ((GBM, ADDITIVE), (GBM, LINEAR), (ADDITIVE, LINEAR), (GBM, NAIVE),
+                          (GBM, LINEAR_HH), (GBM, ADDITIVE_HH), (LINEAR_HH, LINEAR), (ADDITIVE_HH, ADDITIVE)):
         row = {"comparison": f"{first} minus {second}"}
         for name, function in (("mape", mape), ("rmse", rmse)):
             low, high = percentile_interval(boot[first][name] - boot[second][name])
@@ -260,9 +296,25 @@ def main():
               "range of each curve (highest effect minus lowest effect on demand):"]
     lines += [f"    {spread[name]:8.1f} for {name}" for name in sorted(TREE_INPUTS, key=lambda n: -spread[n])]
     lines += ["validation RMSE of the six candidates: "
-              + ", ".join(f"{n} trees: {s:.1f}" for n, s in additive_scores.items()),
+              + ", ".join(f"{n} trees: {s:.1f}" for n, s in additive_scores.items())]
+
+    # Regression per half-hour, fitted on all the data: 48 equations of 9 variables.
+    per_half_hour = fit_per_half_hour(X_lin, y, half_hour)
+    table = pd.DataFrame([[h, *coef] for h, coef in per_half_hour.items()],
+                         columns=["half_hour", "intercept", *LINEAR_INPUTS])
+    table.round(4).to_csv(OUTPUT_DIR / "e2b_halfhour_coefficients.csv", index=False)
+    cooling = table.set_index("half_hour")["cooling_degrees"]
+    lines += ["", "== Linear regression per half-hour (added after review) ==",
+              "48 equations, one per half-hour, each with the same 9 variables (see e2b_halfhour_coefficients.csv)",
+              f"extra demand per degree above 18 C: from {cooling.min():.1f} MWh (half-hour {cooling.idxmin()}) "
+              f"to {cooling.max():.1f} MWh (half-hour {cooling.idxmax()}); half-hour 0 = midnight",
+              "", "== Additive model per half-hour (added after review) ==",
+              f"sum of {half_hour_trees} trees with three leaves, each using the half-hour and one other input: "
+              "one map (half-hour x input) per input",
+              "validation RMSE of the six candidates: "
+              + ", ".join(f"{n} trees: {s:.1f}" for n, s in half_hour_scores.items()),
               "", "== Gradient boosting ==",
-              f"sum of {gbm_trees} trees with {gbm_leaves} leaves each: not readable directly",
+              f"sum of {gbm_trees} trees with {gbm_leaves} leaves each: no short formula",
               "validation RMSE of the six candidates: "
               + ", ".join(f"{n} trees of {l} leaves: {s:.1f}" for (l, n), s in gbm_scores.items())]
     (OUTPUT_DIR / "e2b_models.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -282,7 +334,8 @@ def main():
 
 
 def make_figure(forecasts, results, curves):
-    colors = {NAIVE: COLOR_REFERENCE, LINEAR: COLOR_INTERPRETABLE, ADDITIVE: "#7fbfa9", GBM: COLOR_BLACK_BOX}
+    colors = {NAIVE: COLOR_REFERENCE, LINEAR: COLOR_INTERPRETABLE, ADDITIVE: "#7fbfa9",
+              LINEAR_HH: COLOR_INTERPRETABLE, ADDITIVE_HH: "#7fbfa9", GBM: COLOR_BLACK_BOX}
     fig, axes = plt.subplots(1, 3, figsize=(14, 3.8), gridspec_kw={"width_ratios": [1.5, 1, 1]})
 
     # Left: the week that contains the highest demand of the year.
@@ -308,7 +361,8 @@ def make_figure(forecasts, results, curves):
            error_kw={"capsize": 3, "ecolor": "#666666"})
     for xi, value in zip(x, part["mape"]):
         ax.text(xi, 0.1, f"{value:.1f}%", ha="center", va="bottom", color="white", fontsize=9)
-    ax.set_xticks(x, ["Naive", "Linear", "Additive", "Gradient\nboosting"])
+    ax.set_xticks(x, ["Naive", "Linear", "Additive", "Linear\nper\nhalf-hour", "Additive\nper\nhalf-hour",
+                      "Gradient\nboosting"], fontsize=7)
     ax.set_ylabel("average error (% of demand)")
     ax.set_title("Error over 2014", fontsize=10)
     ax.spines[["top", "right"]].set_visible(False)

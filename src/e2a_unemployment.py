@@ -1,7 +1,7 @@
 """Experiment 2a: does the black box win at forecasting unemployment?
 
 Task: forecast the change in the US unemployment rate over the next 12 months,
-as in the Bank of England study of Buckmann and Joseph (2022), using the
+as in the Bank of England study of Buckmann and Joseph (2023), using the
 FRED-MD panel of monthly macroeconomic series.
 
 Four forecasters are compared on the same months:
@@ -31,7 +31,7 @@ from lightgbm import LGBMRegressor
 from sklearn.linear_model import lasso_path
 
 from common import (COLOR_BLACK_BOX, COLOR_INTERPRETABLE, COLOR_REFERENCE, OUTPUT_DIR,
-                    SEED, percentile_interval)
+                    SEED, block_bootstrap_indices, percentile_interval)
 from data import load_fred_md
 
 HORIZON = 12                 # months ahead
@@ -111,12 +111,6 @@ def fit_gbm(X, target):
 
 # ----------------------------------------------------------------------------------
 
-def block_bootstrap_indices(n, rng):
-    """Resample months in consecutive blocks, to respect the dependence between nearby months."""
-    starts = rng.integers(0, n - BLOCK_LENGTH + 1, size=int(np.ceil(n / BLOCK_LENGTH)))
-    return np.concatenate([np.arange(s, s + BLOCK_LENGTH) for s in starts])[:n]
-
-
 def rmse(errors):
     return float(np.sqrt(np.mean(errors ** 2)))
 
@@ -178,13 +172,13 @@ def main():
 
     rng = np.random.default_rng(SEED)
     result_rows, gap_rows = [], []
-    comparisons = [(GBM, SPARSE), (GBM, AR), (GBM, NAIVE), (SPARSE, AR), (SPARSE, NAIVE)]
+    comparisons = [(GBM, SPARSE), (GBM, AR), (GBM, NAIVE), (SPARSE, AR), (SPARSE, NAIVE), (AR, NAIVE)]
     for period, mask in periods.items():
         e = {m: errors[m][mask] for m in METHODS}
         n = int(mask.sum())
         boot = {m: np.empty(N_BOOTSTRAP) for m in METHODS}
         for b in range(N_BOOTSTRAP):
-            idx = block_bootstrap_indices(n, rng)
+            idx = block_bootstrap_indices(n, BLOCK_LENGTH, rng)
             for m in METHODS:
                 boot[m][b] = rmse(e[m][idx])
         for m in METHODS:

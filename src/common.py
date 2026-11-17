@@ -33,3 +33,15 @@ def percentile_interval(values, level=0.95):
     alpha = (1 - level) / 2
     low, high = np.quantile(values, [alpha, 1 - alpha])
     return float(low), float(high)
+
+
+def block_bootstrap_indices(n, block_length, rng):
+    """One block-bootstrap resample of n consecutive observations (months or days).
+
+    Blocks of `block_length` consecutive observations are drawn with
+    replacement and joined until n observations are reached. Keeping nearby
+    observations together respects the dependence between errors that are
+    close in time.
+    """
+    starts = rng.integers(0, n - block_length + 1, size=int(np.ceil(n / block_length)))
+    return np.concatenate([np.arange(s, s + block_length) for s in starts])[:n]

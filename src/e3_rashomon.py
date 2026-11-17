@@ -5,9 +5,14 @@ different settings and random seeds, keep 50 whose test AUC is within 0.01 of
 the best one, and explain each of them with SHAP. We then measure how much the
 50 explanations agree, for the data set as a whole and for each person.
 
+Control (added after review): the same procedure with 200 sparse logistic
+regressions instead of gradient boostings. If equally accurate readable models
+disagree as much, the disagreement comes from the multiplicity of good models
+(the Rashomon effect), not from post-hoc explanations or black boxes.
+
 Run:  python src/e3_rashomon.py
-Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv, e3_example.csv
-and e3_figure.png.
+Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv, e3_example.csv,
+e3_example_models.csv, e3_control.csv and e3_figure.png.
 """
 
 import itertools
@@ -21,8 +26,11 @@ import pandas as pd
 import shap
 from lightgbm import LGBMClassifier
 from scipy.stats import kendalltau, rankdata
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from common import COLOR_BLACK_BOX, COLOR_INTERPRETABLE, OUTPUT_DIR, SEED
 from data import COMPAS_FEATURES, load_compas
@@ -60,6 +68,50 @@ def shap_values(model, X):
     if values.ndim == 3:
         values = values[:, :, 1]
     return values
+
+
+def logistic_control(X_train, y_train, X_test, y_test):
+    """50 equally accurate sparse logistic regressions, drawn like the 50 gradient boostings.
+
+    Each candidate has its own penalty (from 0.003 to 10, on a log scale) and is
+    trained on a random 50 to 90% of the training rows. For a linear model, the
+    contribution of a variable to one prediction is exactly its coefficient
+    times the gap between the person's value and the average value, which is
+    also its SHAP value. Returns the predicted risks and the main variable of
+    each person in each kept model.
+    """
+    rng = np.random.default_rng(SEED + 1)      # separate from the draws of the boostings
+    candidates = []
+    for _ in range(N_CANDIDATES):
+        rows = rng.choice(len(X_train), size=int(len(X_train) * rng.uniform(0.5, 0.9)), replace=False)
+        penalty = float(np.exp(rng.uniform(np.log(0.003), np.log(10))))
+        model = make_pipeline(StandardScaler(), LogisticRegression(C=penalty, l1_ratio=1.0, solver="liblinear", random_state=SEED))
+        model.fit(X_train.iloc[rows], y_train.iloc[rows])
+        proba = model.predict_proba(X_test)[:, 1]
+        candidates.append((roc_auc_score(y_test, proba), model, proba))
+    aucs = np.array([c[0] for c in candidates])
+    good = np.flatnonzero(aucs >= aucs.max() - AUC_TOLERANCE)
+    kept = np.sort(rng.choice(good, size=min(N_KEPT, len(good)), replace=False))
+    probas = np.array([candidates[i][2] for i in kept])
+    top = []
+    for i in kept:
+        scaler, logit = candidates[i][1].named_steps["standardscaler"], candidates[i][1].named_steps["logisticregression"]
+        contributions = (X_test.to_numpy() - scaler.mean_) / scaler.scale_ * logit.coef_[0]
+        top.append(np.abs(contributions).argmax(axis=1))
+    return probas, np.array(top), len(good), aucs[kept]
+
+
+def agreement_measures(probas, top):
+    """Per-person indicators: yes/no differs, same main variable in all models, share of agreeing pairs."""
+    decisions = probas >= 0.5
+    flips = decisions.any(axis=0) & ~decisions.all(axis=0)
+    same_all = np.array([len(np.unique(top[:, j])) == 1 for j in range(top.shape[1])])
+    n = top.shape[0]
+    pair_share = np.array([(np.bincount(top[:, j]).astype(float) * (np.bincount(top[:, j]) - 1)).sum()
+                           / (n * (n - 1)) for j in range(top.shape[1])])
+    return {"share of people whose yes/no prediction differs between models": flips,
+            "share of people with the same main variable in all models": same_all,
+            "average share of people with the same main variable in two models": pair_share}
 
 
 def main():
@@ -135,6 +187,24 @@ def main():
     ], columns=["quantity", "value"])
     summary["value"] = summary["value"].astype(float).round(4)
     summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
+
+    # ---- Control: the same measures for 50 equally accurate logistic regressions ----
+    # Intervals: the 1,852 people of the test set are resampled 2,000 times.
+    control_probas, control_top, control_good, control_aucs = logistic_control(X_train, y_train, X_test, y_test)
+    people = np.random.default_rng(SEED + 2).integers(0, n_test, size=(2000, n_test))
+    control_rows = []
+    for family, measures in (("gradient boosting", agreement_measures(probas, top)),
+                             ("sparse logistic regression", agreement_measures(control_probas, control_top))):
+        for measure, per_person in measures.items():
+            resampled = per_person[people].mean(axis=1)
+            control_rows.append({"family": family, "measure": measure, "value": per_person.mean(),
+                                 "low": np.quantile(resampled, 0.025), "high": np.quantile(resampled, 0.975)})
+    control = pd.DataFrame(control_rows)
+    control["value"] = control["value"].astype(float)
+    control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
+    print(f"\nControl: {control_good} of {N_CANDIDATES} logistic regressions within {AUC_TOLERANCE} AUC of the best; "
+          f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
+    print(control.round(3).to_string(index=False))
 
     rank_table = pd.DataFrame(
         {f"rank {r}": (ranks == r).sum(axis=0) for r in range(1, n_features + 1)},

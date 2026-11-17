@@ -12,7 +12,7 @@ from common import DATA_DIR
 
 COMPAS_URL = (
     "https://raw.githubusercontent.com/propublica/compas-analysis/"
-    "master/compas-scores-two-years.csv"
+    "c062fbb5fa84f6c99d82f432c46b405f3a0ca5ec/compas-scores-two-years.csv"
 )
 
 # The seven inputs given to every model. All of them are known at the time of
