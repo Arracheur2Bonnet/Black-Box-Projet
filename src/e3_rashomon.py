@@ -228,6 +228,24 @@ def summary_table(n_good, kept_aucs, n_test, probas, shap_all, importance, ranks
     return summary
 
 
+def control_families(probas, top, X_train, y_train, X_test, y_test):
+    """The kept boostings and the two controls (added after review), as the families of control_table.
+
+    In the first control, each logistic regression is trained on a random 50 to
+    90% of the rows; in the second, all of them are trained on every row and
+    only the penalty varies.
+    """
+    families = {"gradient boosting": (probas, top)}
+    for family, subsample in (("sparse logistic regression, each on 50-90% of rows", True),
+                              ("sparse logistic regression, all rows", False)):
+        control_probas, control_top, control_good, control_aucs = logistic_control(
+            X_train, y_train, X_test, y_test, subsample)
+        families[family] = (control_probas, control_top)
+        print(f"\nControl ({family}): {control_good} of {N_CANDIDATES} within {AUC_TOLERANCE} AUC of the best; "
+              f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
+    return families
+
+
 def central_95(values):
     """2.5% and 97.5% quantiles of resampled values.
 
@@ -318,6 +336,7 @@ def example_tables(a, b, j, X_test, shap_all, kept_aucs, probas):
 
 
 def main():
+    """Train the candidates, keep 50, explain them, run the control, then save, print and draw."""
     warnings.filterwarnings("ignore")   # hide library warnings, so that the printed tables stay readable
     OUTPUT_DIR.mkdir(exist_ok=True)
     rng = np.random.default_rng(SEED)
@@ -344,17 +363,8 @@ def main():
     summary = summary_table(len(good), kept_aucs, n_test, probas, shap_all, importance, ranks, top, pairs)
     summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
 
-    # Control: the same measures for 50 equally accurate logistic regressions, in two
-    # versions: each regression trained on a random 50 to 90% of the rows, or all of
-    # them trained on every row with only the penalty varying.
-    families = {"gradient boosting": (probas, top)}
-    for family, subsample in (("sparse logistic regression, each on 50-90% of rows", True),
-                              ("sparse logistic regression, all rows", False)):
-        control_probas, control_top, control_good, control_aucs = logistic_control(
-            X_train, y_train, X_test, y_test, subsample)
-        families[family] = (control_probas, control_top)
-        print(f"\nControl ({family}): {control_good} of {N_CANDIDATES} within {AUC_TOLERANCE} AUC of the best; "
-              f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
+    # Control: the same measures for 50 equally accurate logistic regressions, in two versions.
+    families = control_families(probas, top, X_train, y_train, X_test, y_test)
     control = control_table(families, n_test)
     control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
     print(control.round(3).to_string(index=False))
@@ -371,15 +381,14 @@ def main():
     example, two_models = example_tables(a, b, j, X_test, shap_all, kept_aucs, probas)
     example.to_csv(OUTPUT_DIR / "e3_example.csv", index=False)
     two_models.to_csv(OUTPUT_DIR / "e3_example_models.csv", index=False)
-    example_note = (f"model A: AUC {kept_aucs[a]:.3f}, predicted risk {probas[a, j]:.2f}; "
-                    f"model B: AUC {kept_aucs[b]:.3f}, predicted risk {probas[b, j]:.2f}")
 
     pd.set_option("display.width", 200)
     pd.set_option("display.max_colwidth", 100)
     print("\n" + summary.to_string(index=False))
     print("\nNumber of models (out of 50) giving each rank to each variable")
     print(rank_table.to_string())
-    print("\nOne person, two models: " + example_note)
+    print(f"\nOne person, two models: model A: AUC {kept_aucs[a]:.3f}, predicted risk {probas[a, j]:.2f}; "
+          f"model B: AUC {kept_aucs[b]:.3f}, predicted risk {probas[b, j]:.2f}")
     print(example.to_string(index=False))
 
     make_figure(rank_table, example, kept_aucs[a], kept_aucs[b])
