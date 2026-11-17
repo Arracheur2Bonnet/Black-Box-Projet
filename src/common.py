@@ -7,14 +7,29 @@ import numpy as np
 # One seed for every random step, so that two runs give the same numbers.
 SEED = 2026
 
+# Number of resamples behind every 95% interval of the experiments.
+N_BOOTSTRAP = 2000
+
+# LightGBM settings that make a fit reproducible. With one thread and the
+# deterministic mode, two runs build the same trees. LightGBM otherwise picks
+# one of two ways of building its histograms after timing both, so the way is
+# fixed, as its documentation advises in deterministic mode. verbose=-1 only
+# hides its log.
+LIGHTGBM_REPRODUCIBLE = dict(n_jobs=1, deterministic=True, force_row_wise=True, verbose=-1)
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"        # downloaded files, ignored by git
 OUTPUT_DIR = ROOT / "outputs"   # figures and result files, ignored by git
 
-# Colours used in every figure.
+# Colours of the quick-look figure that each experiment script draws
+# (outputs/e*_figure.png). The figures of the report use their own colours,
+# set in report_figures.py.
 COLOR_INTERPRETABLE = "#2a7f62"
+COLOR_INTERPRETABLE_LIGHT = "#7fbfa9"   # a second readable model in the same figure
 COLOR_BLACK_BOX = "#333333"
 COLOR_REFERENCE = "#b0b0b0"
+COLOR_HIGHLIGHT = "#c0392b"             # what the models are measured against: actual values, accuracy floor
+COLOR_GUIDE = "#666666"                 # error bars and zero lines
 
 
 def bootstrap_indices(n, n_resamples, seed=SEED):

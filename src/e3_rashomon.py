@@ -35,17 +35,29 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from common import COLOR_BLACK_BOX, COLOR_INTERPRETABLE, OUTPUT_DIR, SEED
+from common import (COLOR_BLACK_BOX, COLOR_GUIDE, COLOR_INTERPRETABLE, LIGHTGBM_REPRODUCIBLE, N_BOOTSTRAP,
+                    OUTPUT_DIR, SEED, bootstrap_indices)
 from data import COMPAS_FEATURES, load_compas
 
 N_CANDIDATES = 200      # models trained
 N_KEPT = 50             # models kept among those that are nearly as good as the best
 AUC_TOLERANCE = 0.01    # "nearly as good": test AUC within 0.01 of the best
 TEST_SHARE = 0.30
+DECISION_THRESHOLD = 0.5   # a predicted risk of 0.5 or more means "re-arrest"
+NEAR_THRESHOLD = 0.1       # a risk within 0.1 of the threshold is a borderline case
+
+# The first agreement measure. The control table also uses it to find the people
+# whose yes/no prediction changes.
+FLIP_ANY = "share of people whose yes/no prediction differs between models"
 
 
 def random_settings(rng, seed):
-    """Draw one gradient boosting configuration at random."""
+    """Draw one gradient boosting configuration at random.
+
+    The draws are made in the order of the arguments below. With the generator
+    of `main`, this order fixes the 200 candidates: reordering the arguments
+    would give other models.
+    """
     return dict(
         num_leaves=int(rng.choice([2, 3, 4, 6, 8, 12, 16])),
         n_estimators=int(rng.choice([50, 100, 200, 300, 400])),
@@ -54,7 +66,7 @@ def random_settings(rng, seed):
         subsample_freq=1,
         colsample_bytree=float(rng.choice([0.4, 0.6, 0.8, 1.0])),  # variables used by each tree
         min_child_samples=int(rng.choice([10, 25, 50, 100])),
-        random_state=seed, n_jobs=1, deterministic=True, force_row_wise=True, verbose=-1,
+        random_state=seed, **LIGHTGBM_REPRODUCIBLE,
     )
 
 
@@ -71,6 +83,35 @@ def shap_values(model, X):
     if values.ndim == 3:
         values = values[:, :, 1]
     return values
+
+
+def scored(model, X_test, y_test):
+    """A fitted candidate in the form in which candidates are kept: (test AUC, model, predicted risks)."""
+    proba = model.predict_proba(X_test)[:, 1]
+    return roc_auc_score(y_test, proba), model, proba
+
+
+def keep_equally_accurate(candidates, rng):
+    """Draw N_KEPT models at random among the candidates within AUC_TOLERANCE of the best.
+
+    The models are drawn at random among the good ones, not taken as the top
+    N_KEPT, so that nothing but "nearly as accurate as the best" decides which
+    models are compared. Returns the test AUC of every candidate, the indices
+    of the good ones and the sorted indices of the kept ones.
+    """
+    aucs = np.array([c[0] for c in candidates])
+    good = np.flatnonzero(aucs >= aucs.max() - AUC_TOLERANCE)
+    kept = np.sort(rng.choice(good, size=min(N_KEPT, len(good)), replace=False))
+    return aucs, good, kept
+
+
+def train_boostings(rng, X_train, y_train, X_test, y_test):
+    """Train the N_CANDIDATES gradient boostings, each with settings drawn from `rng` and its own seed."""
+    candidates = []
+    for i in range(N_CANDIDATES):
+        model = LGBMClassifier(**random_settings(rng, seed=SEED + i)).fit(X_train, y_train)
+        candidates.append(scored(model, X_test, y_test))
+    return candidates
 
 
 def logistic_control(X_train, y_train, X_test, y_test, subsample):
@@ -96,11 +137,8 @@ def logistic_control(X_train, y_train, X_test, y_test, subsample):
         penalty = float(np.exp(rng.uniform(np.log(0.003), np.log(10))))
         model = make_pipeline(StandardScaler(), LogisticRegression(C=penalty, l1_ratio=1.0, solver="liblinear", random_state=SEED))
         model.fit(X_train.iloc[rows], y_train.iloc[rows])
-        proba = model.predict_proba(X_test)[:, 1]
-        candidates.append((roc_auc_score(y_test, proba), model, proba))
-    aucs = np.array([c[0] for c in candidates])
-    good = np.flatnonzero(aucs >= aucs.max() - AUC_TOLERANCE)
-    kept = np.sort(rng.choice(good, size=min(N_KEPT, len(good)), replace=False))
+        candidates.append(scored(model, X_test, y_test))
+    aucs, good, kept = keep_equally_accurate(candidates, rng)
     probas = np.array([candidates[i][2] for i in kept])
     top = []
     for i in kept:
@@ -108,9 +146,6 @@ def logistic_control(X_train, y_train, X_test, y_test, subsample):
         contributions = (X_test.to_numpy() - scaler.mean_) / scaler.scale_ * logit.coef_[0]
         top.append(np.abs(contributions).argmax(axis=1))
     return probas, np.array(top), len(good), aucs[kept]
-
-
-FLIP_ANY = "share of people whose yes/no prediction differs between models"
 
 
 def agreement_measures(probas, top):
@@ -122,7 +157,7 @@ def agreement_measures(probas, top):
     different answers, so its average is the share of people whose answer
     differs between two models drawn at random.
     """
-    decisions = probas >= 0.5
+    decisions = probas >= DECISION_THRESHOLD
     n = decisions.shape[0]
     flips = decisions.any(axis=0) & ~decisions.all(axis=0)
     yes = decisions.sum(axis=0)
@@ -136,63 +171,45 @@ def agreement_measures(probas, top):
             "average share of people with the same main variable in two models": pair_share}
 
 
-def main():
-    warnings.filterwarnings("ignore")
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    rng = np.random.default_rng(SEED)
+def explain_all(models, X_test):
+    """SHAP values of every kept model, and what they say about each variable.
 
-    data = load_compas()
-    X, y = data[COMPAS_FEATURES], data["two_year_recid"]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SHARE, stratify=y, random_state=SEED)
-    n_test, n_features = X_test.shape
-
-    # ---- 1. Train many models and keep 50 that are nearly as good as the best ----
-    candidates = []
-    for i in range(N_CANDIDATES):
-        model = LGBMClassifier(**random_settings(rng, seed=SEED + i)).fit(X_train, y_train)
-        proba = model.predict_proba(X_test)[:, 1]
-        candidates.append((roc_auc_score(y_test, proba), model, proba))
-    aucs = np.array([c[0] for c in candidates])
-    good = np.flatnonzero(aucs >= aucs.max() - AUC_TOLERANCE)
-    # Drawn at random among the good models, not the top 50, to avoid picking
-    # models for any reason other than "nearly as accurate as the best".
-    kept = np.sort(rng.choice(good, size=min(N_KEPT, len(good)), replace=False))
-    models = [candidates[i][1] for i in kept]
-    probas = np.array([candidates[i][2] for i in kept])           # (models, people)
-    kept_aucs = aucs[kept]
-    print(f"{len(good)} of {N_CANDIDATES} models are within {AUC_TOLERANCE} AUC of the best "
-          f"({aucs.max():.3f}); {len(kept)} kept, AUC from {kept_aucs.min():.3f} to {kept_aucs.max():.3f}")
-
-    # ---- 2. Explain every model with SHAP ----------------------------------------
+    Returns the SHAP values (models, people, variables), the importance of each
+    variable in each model (mean absolute SHAP value, in log-odds), the rank of
+    each variable in each model, and the main variable of each person in each
+    model (the one with the largest absolute SHAP value).
+    """
     shap_all = np.array([shap_values(m, X_test) for m in models])  # (models, people, variables)
-
-    # Global explanation of a model: variables ranked by mean absolute SHAP value.
     importance = np.abs(shap_all).mean(axis=1)                     # (models, variables)
     # Rank 1 = most important. A variable that a model never uses has an
     # importance of exactly zero; such variables share the last rank.
     ranks = rankdata(-importance, axis=1, method="max").astype(int)
-    pairs = list(itertools.combinations(range(len(models)), 2))
-    taus = np.array([kendalltau(importance[a], importance[b]).statistic for a, b in pairs])
-
-    # Local explanation: for one person, the variable with the largest absolute SHAP value.
     top = np.abs(shap_all).argmax(axis=2)                          # (models, people)
+    return shap_all, importance, ranks, top
+
+
+def summary_table(n_good, kept_aucs, n_test, probas, shap_all, importance, ranks, top, pairs):
+    """How much the kept models agree: in their global ranking, for each person, and in their predictions."""
+    # Global explanation: two models agree when they rank the variables alike.
+    taus = np.array([kendalltau(importance[a], importance[b]).statistic for a, b in pairs])
+    # Local explanation: the main variable of each person. `same_top` is the same
+    # quantity as the pairwise measure of agreement_measures, computed per pair of
+    # models instead of per person.
     n_distinct_top = np.array([len(np.unique(top[:, j])) for j in range(n_test)])
     same_top = np.array([(top[a] == top[b]).mean() for a, b in pairs])
     # Does a variable clearly push the risk up in one model and clearly down in
     # another, for the same person? Effects below 0.1 in absolute value are
     # ignored: values close to zero change sign for no meaningful reason.
     sign_conflict = ((shap_all > 0.1).any(axis=0) & (shap_all < -0.1).any(axis=0))  # (people, variables)
-
     # Predictions themselves: do equally accurate models give the same person the same risk?
     spread = probas.max(axis=0) - probas.min(axis=0)
-    decisions = probas >= 0.5
+    decisions = probas >= DECISION_THRESHOLD
     flips = decisions.any(axis=0) & ~decisions.all(axis=0)
 
     summary = pd.DataFrame([
         ("models trained", N_CANDIDATES),
-        ("models within 0.01 AUC of the best", len(good)),
-        ("models kept", len(kept)),
+        ("models within 0.01 AUC of the best", n_good),
+        ("models kept", len(kept_aucs)),
         ("lowest AUC among kept models", kept_aucs.min()),
         ("highest AUC among kept models", kept_aucs.max()),
         ("people in the test set", n_test),
@@ -208,63 +225,72 @@ def main():
         ("prediction: share of people whose yes/no prediction differs between models", flips.mean()),
     ], columns=["quantity", "value"])
     summary["value"] = summary["value"].astype(float).round(4)
-    summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
+    return summary
 
-    # ---- Control: the same measures for 50 equally accurate logistic regressions ----
-    # Two versions of the control: each regression trained on a random 50 to 90%
-    # of the rows, or all of them trained on every row with only the penalty varying.
-    families = {"gradient boosting": (probas, top)}
-    for family, subsample in (("sparse logistic regression, each on 50-90% of rows", True),
-                              ("sparse logistic regression, all rows", False)):
-        control_probas, control_top, control_good, control_aucs = logistic_control(
-            X_train, y_train, X_test, y_test, subsample)
-        families[family] = (control_probas, control_top)
-        print(f"\nControl ({family}): {control_good} of {N_CANDIDATES} within {AUC_TOLERANCE} AUC of the best; "
-              f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
-    # Intervals: the 1,852 people of the test set are resampled 2,000 times.
-    people = np.random.default_rng(SEED + 2).integers(0, n_test, size=(2000, n_test))
-    control_rows = []
+
+def central_95(values):
+    """2.5% and 97.5% quantiles of resampled values.
+
+    The quantiles 0.025 and 0.975 are written out: common.percentile_interval
+    computes (1 - 0.95) / 2, which is not exactly 0.025 in floating point and
+    would change the last digits of the saved intervals.
+    """
+    return np.quantile(values, 0.025), np.quantile(values, 0.975)
+
+
+def control_table(families, n_test):
+    """The agreement measures of each family of 50 models, with 95% intervals over people.
+
+    `families` maps a name to (predicted risks, main variable of each person),
+    both of shape (models, people). The 1,852 people of the test set are
+    resampled N_BOOTSTRAP times, and every family is measured on the same
+    resamples.
+    """
+    people = bootstrap_indices(n_test, N_BOOTSTRAP, seed=SEED + 2)
+    rows = []
     for family, (family_probas, family_top) in families.items():
         measures = agreement_measures(family_probas, family_top)
         for measure, per_person in measures.items():
-            resampled = per_person[people].mean(axis=1)
-            control_rows.append({"family": family, "measure": measure, "value": per_person.mean(),
-                                 "low": np.quantile(resampled, 0.025), "high": np.quantile(resampled, 0.975)})
+            low, high = central_95(per_person[people].mean(axis=1))
+            rows.append({"family": family, "measure": measure, "value": per_person.mean(),
+                         "low": low, "high": high})
         # Are the people whose answer changes the borderline cases? Among them,
         # the share whose risk, averaged over the 50 models, is from 0.4 to 0.6.
         flips = measures[FLIP_ANY]
-        near = np.abs(family_probas.mean(axis=0) - 0.5) <= 0.1
-        resampled = (flips & near)[people].sum(axis=1) / flips[people].sum(axis=1)
-        control_rows.append({"family": family, "value": (flips & near).sum() / flips.sum(),
-                             "measure": "among these people, share whose average risk is from 0.4 to 0.6",
-                             "low": np.quantile(resampled, 0.025), "high": np.quantile(resampled, 0.975)})
-    control = pd.DataFrame(control_rows)
+        near = np.abs(family_probas.mean(axis=0) - DECISION_THRESHOLD) <= NEAR_THRESHOLD
+        low, high = central_95((flips & near)[people].sum(axis=1) / flips[people].sum(axis=1))
+        rows.append({"family": family, "value": (flips & near).sum() / flips.sum(),
+                     "measure": "among these people, share whose average risk is from 0.4 to 0.6",
+                     "low": low, "high": high})
+    control = pd.DataFrame(rows)
     control["value"] = control["value"].astype(float)
-    control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
-    print(control.round(3).to_string(index=False))
+    return control
 
-    rank_table = pd.DataFrame(
-        {f"rank {r}": (ranks == r).sum(axis=0) for r in range(1, n_features + 1)},
+
+def rank_counts(ranks):
+    """Number of models that give each rank to each variable (one row per variable)."""
+    table = pd.DataFrame(
+        {f"rank {r}": (ranks == r).sum(axis=0) for r in range(1, ranks.shape[1] + 1)},
         index=COMPAS_FEATURES)
-    rank_table.index.name = "variable"
-    rank_table.to_csv(OUTPUT_DIR / "e3_ranks.csv")
+    table.index.name = "variable"
+    return table
 
-    # The ranking given by each of the 50 models, with its test AUC.
-    model_ranks = pd.DataFrame(ranks, columns=COMPAS_FEATURES)
-    model_ranks.insert(0, "auc", kept_aucs.round(4))
-    model_ranks.insert(0, "model", np.arange(1, len(models) + 1))
-    model_ranks.to_csv(OUTPUT_DIR / "e3_model_ranks.csv", index=False)
 
-    # The importance behind these ranks: mean absolute SHAP value of each variable
-    # in each model (log-odds). It shows how much more the first variables weigh.
-    model_importance = pd.DataFrame(importance.round(4), columns=COMPAS_FEATURES)
-    model_importance.insert(0, "auc", kept_aucs.round(4))
-    model_importance.insert(0, "model", np.arange(1, len(models) + 1))
-    model_importance.to_csv(OUTPUT_DIR / "e3_model_importance.csv", index=False)
+def per_model_table(values, kept_aucs):
+    """One row per kept model: its number, its test AUC and one value per variable."""
+    table = pd.DataFrame(values, columns=COMPAS_FEATURES)
+    table.insert(0, "auc", kept_aucs.round(4))
+    table.insert(0, "model", np.arange(1, len(values) + 1))
+    return table
 
-    # ---- 3. One person, two models, two explanations ------------------------------
-    # Among the people whose top variable differs between two models, take the
-    # case where both models are the most affirmative about their own top variable.
+
+def pick_example(pairs, top, shap_all):
+    """One person explained differently by two models: the most affirmative case found.
+
+    Among the people whose main variable differs between two models, take the
+    case where both models are the most affirmative about their own main
+    variable. Returns the two models and the person.
+    """
     best = None
     for a, b in pairs:
         differ = np.flatnonzero(top[a] != top[b])
@@ -275,16 +301,76 @@ def main():
         if best is None or strength.max() > best[0]:
             best = (strength.max(), a, b, j)
     _, a, b, j = best
+    return a, b, j
+
+
+def example_tables(a, b, j, X_test, shap_all, kept_aucs, probas):
+    """The example person: the SHAP values given by the two models, and their AUC and predicted risk."""
     example = pd.DataFrame({
         "variable": COMPAS_FEATURES,
         "value for this person": X_test.iloc[j].to_numpy(),
         "SHAP in model A": shap_all[a, j].round(3),
         "SHAP in model B": shap_all[b, j].round(3),
     })
+    two_models = pd.DataFrame({"model": ["A", "B"], "auc": [round(kept_aucs[a], 3), round(kept_aucs[b], 3)],
+                               "predicted_risk": [round(probas[a, j], 2), round(probas[b, j], 2)]})
+    return example, two_models
+
+
+def main():
+    warnings.filterwarnings("ignore")   # hide library warnings, so that the printed tables stay readable
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    rng = np.random.default_rng(SEED)
+
+    data = load_compas()
+    X, y = data[COMPAS_FEATURES], data["two_year_recid"]
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SHARE, stratify=y, random_state=SEED)
+    n_test = X_test.shape[0]
+
+    # ---- 1. Train many models and keep 50 that are nearly as good as the best ----
+    # `rng` serves these two steps only, in this order.
+    candidates = train_boostings(rng, X_train, y_train, X_test, y_test)
+    aucs, good, kept = keep_equally_accurate(candidates, rng)
+    models = [candidates[i][1] for i in kept]
+    probas = np.array([candidates[i][2] for i in kept])           # (models, people)
+    kept_aucs = aucs[kept]
+    print(f"{len(good)} of {N_CANDIDATES} models are within {AUC_TOLERANCE} AUC of the best "
+          f"({aucs.max():.3f}); {len(kept)} kept, AUC from {kept_aucs.min():.3f} to {kept_aucs.max():.3f}")
+
+    # ---- 2. Explain every model with SHAP and measure how much they agree ----------
+    shap_all, importance, ranks, top = explain_all(models, X_test)
+    pairs = list(itertools.combinations(range(len(models)), 2))
+    summary = summary_table(len(good), kept_aucs, n_test, probas, shap_all, importance, ranks, top, pairs)
+    summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
+
+    # Control: the same measures for 50 equally accurate logistic regressions, in two
+    # versions: each regression trained on a random 50 to 90% of the rows, or all of
+    # them trained on every row with only the penalty varying.
+    families = {"gradient boosting": (probas, top)}
+    for family, subsample in (("sparse logistic regression, each on 50-90% of rows", True),
+                              ("sparse logistic regression, all rows", False)):
+        control_probas, control_top, control_good, control_aucs = logistic_control(
+            X_train, y_train, X_test, y_test, subsample)
+        families[family] = (control_probas, control_top)
+        print(f"\nControl ({family}): {control_good} of {N_CANDIDATES} within {AUC_TOLERANCE} AUC of the best; "
+              f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
+    control = control_table(families, n_test)
+    control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
+    print(control.round(3).to_string(index=False))
+
+    # The rank of each variable in each model, and the mean absolute SHAP value
+    # behind it (log-odds), which shows how much more the first variables weigh.
+    rank_table = rank_counts(ranks)
+    rank_table.to_csv(OUTPUT_DIR / "e3_ranks.csv")
+    per_model_table(ranks, kept_aucs).to_csv(OUTPUT_DIR / "e3_model_ranks.csv", index=False)
+    per_model_table(importance.round(4), kept_aucs).to_csv(OUTPUT_DIR / "e3_model_importance.csv", index=False)
+
+    # ---- 3. One person, two models, two explanations ------------------------------
+    a, b, j = pick_example(pairs, top, shap_all)
+    example, two_models = example_tables(a, b, j, X_test, shap_all, kept_aucs, probas)
     example.to_csv(OUTPUT_DIR / "e3_example.csv", index=False)
-    pd.DataFrame({"model": ["A", "B"], "auc": [round(kept_aucs[a], 3), round(kept_aucs[b], 3)],
-                  "predicted_risk": [round(probas[a, j], 2), round(probas[b, j], 2)]}
-                 ).to_csv(OUTPUT_DIR / "e3_example_models.csv", index=False)
+    two_models.to_csv(OUTPUT_DIR / "e3_example_models.csv", index=False)
     example_note = (f"model A: AUC {kept_aucs[a]:.3f}, predicted risk {probas[a, j]:.2f}; "
                     f"model B: AUC {kept_aucs[b]:.3f}, predicted risk {probas[b, j]:.2f}")
 
@@ -301,6 +387,10 @@ def main():
 
 
 def make_figure(rank_table, example, auc_a, auc_b):
+    """Quick-look figure of E3: the ranks given by the 50 models, and the example person.
+
+    The report uses figure 4, drawn by report_figures.py, instead.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(11, 3.8))
 
     # Left: how the 50 models rank each variable.
@@ -328,7 +418,7 @@ def make_figure(rank_table, example, auc_a, auc_b):
             label=f"model B (AUC {auc_b:.3f})")
     labels = [f"{v} = {x:g}" for v, x in zip(example["variable"], example["value for this person"])]
     ax.set_yticks(positions, labels)
-    ax.axvline(0, color="#666666", linewidth=0.8)
+    ax.axvline(0, color=COLOR_GUIDE, linewidth=0.8)
     ax.set_xlabel("SHAP value (effect on the log-odds of re-arrest)")
     ax.set_title("One person explained by two models", fontsize=10)
     ax.legend(frameon=False, fontsize=8)
