@@ -52,8 +52,7 @@ What the numbers show:
   0.8 point of accuracy (interval 0.1 to 1.6), 0.005 of AUC and 0.006 of Brier
   score. The cost of interpretability is small but measurable. The two models
   give a different yes/no prediction to 506 of the 6,172 people (8.2%); for 80%
-  of them, both predicted risks are between 0.4 and 0.6. The average gap
-  between the two predicted risks is 0.065.
+  of them, both predicted risks are between 0.4 and 0.6. Over all 6,172 people, the average gap between the two predicted risks is 0.065.
 - Corrected after review: the logistic regression is fitted with liblinear,
   which penalises the intercept like a coefficient. With the strong penalty
   chosen here, this shifted every predicted risk upwards (average 0.473 for a
@@ -95,7 +94,7 @@ for March 2020 to December 2021. Run time: about 2.5 minutes.
 
 | Method | Kind | RMSE, all months | RMSE, without Covid period |
 |---|---|---|---|
-| Naive (no change) | baseline | 1.52 [0.73, 2.30] | 0.96 [0.66, 1.33] |
+| Naive (no change) | baseline | 1.52 [0.72, 2.30] | 0.96 [0.66, 1.33] |
 | Autoregressive model | interpretable | 1.82 [0.63, 3.00] | 0.82 [0.58, 1.12] |
 | Sparse linear model | interpretable | 1.53 [0.70, 2.33] | 0.93 [0.60, 1.32] |
 | Gradient boosting | black box | 1.51 [0.76, 2.23] | 0.97 [0.64, 1.22] |
@@ -131,7 +130,7 @@ What the numbers show:
 - Forecasting unemployment a year ahead is hard for every model: the forecasts
   follow the turning points with a delay instead of announcing them.
 - From 2023 to 2025, the forecasts of the gradient boosting stay well above the
-  observed rate, while the linear models come back to it, most likely because
+  observed rate, while the sparse linear model comes back to it and the autoregression stays about half a point above (0.54 on average), most likely because
   the extreme values of 2020 entered its training data.
 
 The interpretable models can be read in full. Fitted on all the data, the sparse
@@ -315,7 +314,7 @@ sees all of them. As in E1, the intercept of the regressions is left almost free
 | People whose yes/no prediction differs between two models | 4.1% [3.7, 4.6] | 6.1% [5.5, 6.7] | 4.2% [3.7, 4.7] |
 | Among the people of the first line, those whose average risk is between 0.4 and 0.6 | 80% [76, 84] | 88% [85, 91] | 93% [90, 96] |
 | People with the same main variable in all 50 models | 64% [62, 66] | 65% [63, 67] | 82% [80, 83] |
-| People with the same main variable in two models | 92% [91, 92] | 92% [92, 93] | 96% [96, 97] |
+| People with the same main variable in two models | 92% [91, 92] | 92% [91, 93] | 96% [96, 97] |
 
 Sensitivity (added after review): the share of 23% depends on what "equally
 good" means. The AUC only looks at how people are ranked. Asking also for a
@@ -347,15 +346,14 @@ What the numbers show:
   people concerned, 93% have a risk between 0.4 and 0.6, against 80% for the
   boostings. The instability thus comes largely from the multiplicity of good
   models (the Rashomon effect), which readable models share.
-- The size of these shares depends on the definition of "equally good": with a
-  condition on the Brier score as well, the 23% falls to between 9% and 17%.
+- The size of these shares depends on the definition of "equally good": counted over all the boostings within 0.01 of AUC, the share is 25%; with a condition on the Brier score as well, it falls to between 9% and 17%.
 - An explanation, like the reading of one readable model, describes one model,
   not what another equally good model would decide.
 
 One example from the test set: a 61-year-old man with 20 priors and a
 non-felony charge. Model A (AUC 0.727) gives him a risk of 0.65 and its largest
 SHAP value is the number of priors (+1.94 against -1.00 for age). Model B (AUC
-0.721) gives him a risk of 0.34 and its largest SHAP value is age (-1.33 against
+0.721) gives him a risk of 0.34 and its largest SHAP value in absolute terms is age (-1.33 against
 +1.18 for priors). He is the most extreme disagreement found by searching all
 pairs of models and all people: he illustrates the effect, he does not measure
 it.

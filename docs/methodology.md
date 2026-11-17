@@ -170,8 +170,7 @@ criterion for an interpretable model.
 - The Covid period was left out in the protocol, before the forecasts were
   run, but it holds the months in which the autoregression fails most. With
   them, the autoregression has the largest error instead of the smallest, so
-  the ranking of the models is not robust; only the absence of an advantage
-  for the black box holds in both cases.
+  the ranking of the models is not robust; only the absence of a significant advantage for the black box holds in both cases.
 - We use one release of the data. Many series are revised after their first
   publication and are published with a delay, so a forecaster at the time had
   slightly different and older numbers.
@@ -189,7 +188,7 @@ Script: `src/e2b_electricity.py`
 
 ### Why this problem
 
-E1 and E2a did not show any advantage for the black box. We therefore added a
+E1 and E2a showed little or no advantage for the black box. We therefore added a
 problem on which a black box is expected to do well, and we wrote this
 expectation down before running the experiment. Electricity demand depends on
 temperature in a non-linear way: it rises when it is cold (heating) and when it
@@ -284,8 +283,7 @@ literature before being run, and their settings were chosen like the others.
   forecast were perfect. All models receive it, but real errors would be larger,
   and a model that relies more on temperature would suffer more.
 - The data cover one region and three years, and the test covers one year.
-- The problem was added after E1 and E2a had shown no advantage for the black
-  box, and the two models per half-hour were added after a review. Both
+- The problem was added after E1 and E2a had shown little or no advantage for the black box, and the two models per half-hour were added after a review. Both
   additions follow the literature, but other readable models could do better
   or worse.
 - The problem was chosen because the black box was expected to win. The result
@@ -322,7 +320,7 @@ model, just as accurate, would have given the same explanation.
      value. Two rankings are compared with Kendall's tau, which goes from 1
      (same order) to -1 (reversed order). A variable that a model does not use
      at all has an importance of zero and is ranked last.
-   - **One person.** We look at the variable with the largest SHAP value for
+   - **One person.** We look at the variable with the largest absolute SHAP value for
      that person, and at whether a variable clearly raises the risk in one model
      and clearly lowers it in another (effects below 0.1 in absolute value are
      ignored).
@@ -362,8 +360,7 @@ effect; it does not measure it.
   differ. A data set with many correlated inputs would be a harder test.
 - The share of 23% grows with the number of models compared; the share between
   two models (4.1%) does not. It also depends on what "equally good" means: with
-  a condition on the Brier score as well as on the AUC, it falls to between 9%
-  and 17% (`outputs/e3_sensitivity.csv`). The design of the control matters as
+  a condition on the Brier score as well as on the AUC, it falls from 25% (all the boostings within 0.01 of AUC) to between 9% and 17% (`outputs/e3_sensitivity.csv`). The design of the control matters as
   well: the logistic regressions disagree for 25% of people when each sees part
   of the rows, and for 16% when all see every row.
 - SHAP describes what a model does, not what causes re-arrest.

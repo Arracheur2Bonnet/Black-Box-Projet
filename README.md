@@ -46,7 +46,7 @@ The protocol of each experiment and its limits are described in
   is as accurate as the COMPAS score (0.667 against 0.661).
 - **E2a.** For unemployment 12 months ahead, the black box does not beat the
   readable models. Outside the Covid period, the lowest error comes from an
-  autoregression on unemployment alone, but its lead is not significant, and
+  autoregression on unemployment alone, but its lead over the other two models is not significant, and
   with the Covid period included it has the largest error.
 - **E2b.** For electricity demand, the black box clearly beats the simplest
   readable models (2.9% of error against 5.1% for a linear regression with 9
@@ -61,8 +61,7 @@ The protocol of each experiment and its limits are described in
   over 50 models, 4.2% to 6.1% between two), mostly about people whose risk is
   close to 0.5: the instability comes largely from the multiplicity of good
   models, not from the explanations. These shares depend on what "equally
-  good" means: asking also for a good Brier score brings the 23% down to
-  between 9% and 17%.
+  good" means: counted over all the boostings within 0.01 of AUC the share is 25%, and asking also for a good Brier score brings it down to between 9% and 17%.
 
 Taken together, interpretability cost little in our tests once the readable
 model was built with the same care as the black box: less than one point of
