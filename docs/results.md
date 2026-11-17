@@ -11,7 +11,7 @@ COMPAS data, 6,172 people. Run time: about 2.5 minutes.
 
 | Method | Kind | AUC | Accuracy | Brier score |
 |---|---|---|---|---|
-| Sparse logistic regression | interpretable | 0.731 [0.718, 0.744] | 0.683 [0.672, 0.695] | 0.212 [0.209, 0.216] |
+| Sparse logistic regression | interpretable | 0.731 [0.718, 0.744] | 0.674 [0.663, 0.686] | 0.212 [0.208, 0.215] |
 | Decision tree (depth at most 3) | interpretable | 0.708 [0.694, 0.721] | 0.670 [0.658, 0.682] | 0.214 [0.209, 0.218] |
 | Gradient boosting | black box | 0.736 [0.723, 0.748] | 0.683 [0.671, 0.694] | 0.206 [0.202, 0.211] |
 | COMPAS score | reference | 0.710 [0.698, 0.722] | 0.661 [0.649, 0.673] | |
@@ -26,7 +26,7 @@ Gap between the gradient boosting and each other method:
 
 | Gradient boosting minus | AUC gap | Accuracy gap | Brier gap |
 |---|---|---|---|
-| Sparse logistic regression | 0.005 [0.001, 0.009] | -0.001 [-0.007, 0.005] | -0.006 [-0.008, -0.004] |
+| Sparse logistic regression | 0.005 [0.001, 0.009] | 0.008 [0.001, 0.016] | -0.006 [-0.007, -0.004] |
 | Decision tree (depth at most 3) | 0.028 [0.022, 0.034] | 0.013 [0.005, 0.021] | -0.007 [-0.009, -0.005] |
 | COMPAS score | 0.026 [0.014, 0.037] | 0.022 [0.009, 0.034] | |
 | Rudin (2019) rule list | not comparable | 0.016 [0.006, 0.025] | |
@@ -36,24 +36,30 @@ box is better.
 
 People whose yes/no prediction differs from that of the gradient boosting
 (added after review). The last column gives, among these people, the share
-whose predicted risk, averaged over the two models, is between 0.4 and 0.6,
-that is, close to the threshold of 0.5:
+for whom both predicted risks are between 0.4 and 0.6, that is, close to the
+threshold of 0.5:
 
-| Gradient boosting vs | People | Share of the 6,172 | Risk between 0.4 and 0.6 |
+| Gradient boosting vs | People | Share of the 6,172 | Both risks between 0.4 and 0.6 |
 |---|---|---|---|
-| Sparse logistic regression | 351 | 5.7% [5.1, 6.3] | 100% |
-| Decision tree (depth at most 3) | 663 | 10.7% [10.0, 11.5] | 99% |
+| Sparse logistic regression | 506 | 8.2% [7.5, 8.8] | 80% |
+| Decision tree (depth at most 3) | 663 | 10.7% [10.0, 11.5] | 58% |
 | COMPAS score (5 or more) | 1,581 | 25.6% [24.5, 26.7] | |
 | Rudin (2019) rule list | 849 | 13.8% [12.9, 14.6] | |
 
 What the numbers show:
 
-- The black box and the sparse logistic regression have the same accuracy. On
-  finer measures the black box is slightly ahead (0.005 of AUC, 0.006 of Brier
-  score). These gaps are small, but they still change the answer given to some
-  people: the two models give a different yes/no prediction to 351 of the
-  6,172 people (5.7%), all of them with a predicted risk between 0.4 and 0.6.
-  The average gap between the two predicted risks is 0.066.
+- The black box is slightly more accurate than the sparse logistic regression:
+  0.8 point of accuracy (interval 0.1 to 1.6), 0.005 of AUC and 0.006 of Brier
+  score. The cost of interpretability is small but measurable. The two models
+  give a different yes/no prediction to 506 of the 6,172 people (8.2%); for 80%
+  of them, both predicted risks are between 0.4 and 0.6. The average gap
+  between the two predicted risks is 0.065.
+- Corrected after review: the logistic regression is fitted with liblinear,
+  which penalises the intercept like a coefficient. With the strong penalty
+  chosen here, this shifted every predicted risk upwards (average 0.473 for a
+  re-arrest rate of 0.455) and happened to give the same accuracy as the black
+  box (0.683). The intercept is now left almost free (`intercept_scaling`);
+  AUC and Brier score barely change, the accuracy falls to 0.674.
 - The published rule list is as accurate as the COMPAS score on our data (0.667
   against 0.661). It was learned by others on Broward County data that overlap
   ours, so its accuracy is partly measured on the data it was learned from.
@@ -66,12 +72,12 @@ The fitted interpretable models can be read in full. The logistic regression
 uses 5 of the 7 inputs:
 
 ```
-log-odds of re-arrest = 0.432
-    - 0.035 x age
-    + 0.165 x male
-    + 0.140 x number of priors
-    + 0.141 x number of other juvenile offenses
-    + 0.113 x felony charge
+log-odds of re-arrest = 0.378
+    - 0.036 x age
+    + 0.168 x male
+    + 0.138 x number of priors
+    + 0.137 x number of other juvenile offenses
+    + 0.116 x felony charge
 ```
 
 In 8 of the 10 folds, the setting chosen for the gradient boosting was 300 trees
@@ -218,7 +224,13 @@ boosting is a sum of 1,000 trees with 8 leaves each and cannot be read directly.
 Errors on the 175 half-hours with the highest demand of 2014 (11 days, mostly
 during the heat wave of 13 to 17 January). This table was added after looking at
 the forecasts of the hottest week. It has no interval and covers a single heat
-wave, so it describes these days and does not test a difference:
+wave, so it describes these days and does not test a difference. The
+half-hours are selected on the actual demand, which by itself pushes the errors
+downwards (corrected after review): selected on each model's own forecasts,
+the mean errors are +0.2% for the linear regression, -3.7% for the regression
+per half-hour and -3.3% for the gradient boosting, and the additive model per
+half-hour has the lowest MAPE (5.7%). The table therefore does not rank the
+models:
 
 | Method | MAPE | Mean error |
 |---|---|---|
@@ -229,12 +241,12 @@ wave, so it describes these days and does not test a difference:
 | Additive model per half-hour | 7.8% | -6.9% |
 | Gradient boosting | 7.5% | -6.6% |
 
-- Every model underestimates the peaks, and the regression per half-hour is the
-  most accurate there.
+- Every model underestimates these half-hours, partly because of how they are
+  selected; the ranking of the models changes with the selection.
 - The highest demand of 2014 (9,345 MWh) is above every value of 2012 and 2013
   (at most 8,897 MWh). The highest forecast of the gradient boosting over the
   whole year is 8,540 MWh: a model made of trees does not forecast values
-  outside the range it has seen. An average error therefore hides how a model
+  outside the range it has seen. The two linear regressions go above 9,500 MWh. An average error therefore hides how a model
   behaves in the situations that matter most, which have to be checked
   separately.
 
@@ -289,19 +301,34 @@ juvenile offenses 0.06, juvenile felonies 0.02, juvenile misdemeanors 0.01
 Control (added after review): the same measures for 50 equally accurate sparse
 logistic regressions, drawn in two ways. In the first, each regression is
 trained on a random 50 to 90% of the training rows, the share that each tree of
-a boosting sees (198 of 200 candidates were within 0.01 AUC of the best one).
+a boosting sees (199 of 200 candidates were within 0.01 AUC of the best one).
 In the second, every regression sees all the rows and only the penalty varies
 (200 of 200 within 0.01 AUC). As for the rows they see, the boostings sit in
 between: each of their trees sees part of the rows, but the model as a whole
-sees all of them.
+sees all of them. As in E1, the intercept of the regressions is left almost free
+(corrected after review; with a penalised intercept the control gave 21% and
+12% on the first line).
 
 | Measure | Gradient boostings | Logistic regressions, each on 50-90% of rows | Logistic regressions, all rows |
 |---|---|---|---|
-| People whose yes/no prediction differs in at least one of the 50 models | 23.0% [21.1, 24.9] | 20.8% [18.9, 22.7] | 12.0% [10.5, 13.4] |
-| People whose yes/no prediction differs between two models | 4.1% [3.7, 4.6] | 5.6% [5.0, 6.2] | 3.5% [3.0, 4.0] |
-| Among the people of the first line, those whose average risk is between 0.4 and 0.6 | 80% [76, 84] | 99% [98, 100] | 99% [97, 100] |
-| People with the same main variable in all 50 models | 64% [62, 66] | 68% [66, 70] | 82% [80, 83] |
-| People with the same main variable in two models | 92% [91, 92] | 92% [91, 93] | 95% [95, 96] |
+| People whose yes/no prediction differs in at least one of the 50 models | 23.0% [21.1, 24.9] | 25.1% [23.1, 26.9] | 15.6% [13.9, 17.3] |
+| People whose yes/no prediction differs between two models | 4.1% [3.7, 4.6] | 6.1% [5.5, 6.7] | 4.2% [3.7, 4.7] |
+| Among the people of the first line, those whose average risk is between 0.4 and 0.6 | 80% [76, 84] | 88% [85, 91] | 93% [90, 96] |
+| People with the same main variable in all 50 models | 64% [62, 66] | 65% [63, 67] | 82% [80, 83] |
+| People with the same main variable in two models | 92% [91, 92] | 92% [92, 93] | 96% [96, 97] |
+
+Sensitivity (added after review): the share of 23% depends on what "equally
+good" means. The AUC only looks at how people are ranked. Asking also for a
+Brier score close to the best one, so that the predicted risks are well
+calibrated, leaves fewer models that put a person on different sides of 0.5.
+All the boostings that meet each definition are used (`e3_sensitivity.csv`):
+
+| Equally good means | Models | Prediction differs in at least one model | Between two models |
+|---|---|---|---|
+| AUC within 0.01 of the best | 144 | 25.1% | 4.0% |
+| ... and Brier score within 0.005 of the best | 126 | 16.5% | 3.1% |
+| ... and Brier score within 0.002 of the best | 83 | 10.9% | 2.2% |
+| ... and Brier score within 0.001 of the best | 44 | 9.0% | 1.8% |
 
 What the numbers show:
 
@@ -313,16 +340,17 @@ What the numbers show:
   prediction differs for 4.1% of people, and most of the people concerned have
   a predicted risk close to 0.5.
 - Readable models are not immune. Equally accurate logistic regressions also
-  change the decision about some people: between two models, for 3.5% of
-  people when all rows are used and 5.6% with random subsets of rows, against
+  change the decision about some people: between two models, for 4.2% of
+  people when all rows are used and 6.1% with random subsets of rows, against
   4.1% for the boostings. Over the 50 models, the regressions trained on all
-  rows change it for 12% of people, about half as many as the boostings (23%),
-  and almost all of these people (99%) have a risk between 0.4 and 0.6, against
-  80% for the boostings. Part of the instability thus comes from the
-  multiplicity of good models (the Rashomon effect), which readable models
-  share; the boostings add some of their own, spread over more people. An
-  explanation, like the reading of one readable model, describes one model, not
-  what another equally good model would decide.
+  rows change it for 16% of people, against 23% for the boostings; among the
+  people concerned, 93% have a risk between 0.4 and 0.6, against 80% for the
+  boostings. The instability thus comes largely from the multiplicity of good
+  models (the Rashomon effect), which readable models share.
+- The size of these shares depends on the definition of "equally good": with a
+  condition on the Brier score as well, the 23% falls to between 9% and 17%.
+- An explanation, like the reading of one readable model, describes one model,
+  not what another equally good model would decide.
 
 One example from the test set: a 61-year-old man with 20 priors and a
 non-felony charge. Model A (AUC 0.727) gives him a risk of 0.65 and its largest

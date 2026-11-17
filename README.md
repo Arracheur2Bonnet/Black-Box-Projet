@@ -27,9 +27,9 @@ additive models as interpretable.
 
 | | Question | Data | Models | Script | Run time |
 |---|---|---|---|---|---|
-| E1 | What does interpretability cost in accuracy? | COMPAS recidivism data (ProPublica) | Sparse logistic regression, small decision tree, gradient boosting | `src/e1_compas.py` | 2.5 min |
-| E2a | Does the black box win at forecasting unemployment? | US unemployment rate 12 months ahead, FRED-MD panel of monthly macroeconomic series | Naive forecast, autoregressive model, sparse linear model, gradient boosting | `src/e2a_unemployment.py` | 2.5 min |
-| E2b | Does the black box win at forecasting electricity demand? | Half-hourly electricity demand of Victoria (Australia), one day ahead | Naive forecast, linear regression, additive model, the same two fitted per half-hour, gradient boosting | `src/e2b_electricity.py` | 10 min |
+| E1 | What does interpretability cost in accuracy? | COMPAS recidivism data (ProPublica) | Sparse logistic regression, small decision tree, gradient boosting | `src/e1_compas.py` | 2 to 3 min |
+| E2a | Does the black box win at forecasting unemployment? | US unemployment rate 12 months ahead, FRED-MD panel of monthly macroeconomic series | Naive forecast, autoregressive model, sparse linear model, gradient boosting | `src/e2a_unemployment.py` | 1.5 to 3 min |
+| E2b | Does the black box win at forecasting electricity demand? | Half-hourly electricity demand of Victoria (Australia), one day ahead | Naive forecast, linear regression, additive model, the same two fitted per half-hour, gradient boosting | `src/e2b_electricity.py` | 3 to 10 min |
 | E3 | Do equally accurate models give the same explanation and the same decision? | Same as E1 | 50 gradient boosting models with nearly the same accuracy; as a control, logistic regressions drawn in two ways | `src/e3_rashomon.py` | 1 min |
 
 The protocol of each experiment and its limits are described in
@@ -39,10 +39,10 @@ The protocol of each experiment and its limits are described in
 ## What we found
 
 - **E1.** On the recidivism data, a logistic regression that uses 5 variables is
-  as accurate as the gradient boosting (accuracy 0.683 for both). The black box
-  is slightly ahead on finer measures (0.005 of AUC, 0.006 of Brier score), and
-  the two models give a different yes/no prediction to 351 of the 6,172 people
-  (5.7%), all with a risk close to 0.5. The rule list published by Rudin (2019)
+  almost as accurate as the gradient boosting: 0.674 against 0.683 of
+  accuracy (gap 0.8 point, interval 0.1 to 1.6), 0.005 of AUC and 0.006 of
+  Brier score. The two models give a different yes/no prediction to 506 of the
+  6,172 people (8.2%), mostly people whose risk is close to 0.5. The rule list published by Rudin (2019)
   is as accurate as the COMPAS score (0.667 against 0.661).
 - **E2a.** For unemployment 12 months ahead, the black box does not beat the
   readable models. Outside the Covid period, the lowest error comes from an
@@ -57,13 +57,17 @@ The protocol of each experiment and its limits are described in
 - **E3.** Fifty equally accurate black boxes agree on which variables matter
   overall. For one person, they sometimes disagree: for 23% of people, at
   least one of the 50 models gives a different yes/no prediction; between two
-  models, 4.1%. Equally accurate logistic regressions also disagree (12% to 21%
-  over 50 models, 3.5% to 5.6% between two), almost only about people whose
-  risk is close to 0.5: part of the instability comes from the multiplicity of
-  good models, not from the explanations.
+  models, 4.1%. Equally accurate logistic regressions also disagree (16% to 25%
+  over 50 models, 4.2% to 6.1% between two), mostly about people whose risk is
+  close to 0.5: the instability comes largely from the multiplicity of good
+  models, not from the explanations. These shares depend on what "equally
+  good" means: asking also for a good Brier score brings the 23% down to
+  between 9% and 17%.
 
 Taken together, interpretability cost little in our tests once the readable
-model was built with the same care as the black box; the black box found by
+model was built with the same care as the black box: less than one point of
+accuracy on recidivism, nothing on unemployment, 0.3 point of error on
+electricity; the black box found by
 itself a structure that the readable model needed from domain knowledge. It is
 for the black box to show its advantage, against a readable model built with
 the same effort.
@@ -77,7 +81,7 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 source .venv/bin/activate       # macOS, Linux
 pip install -r requirements.txt
-python src/e1_compas.py
+python src/run_all.py           # every experiment, then the report figures
 ```
 
 Each script downloads its data if needed, prints its result tables and writes
@@ -94,8 +98,11 @@ Some models and comparisons were added after a review of the first results:
 the two models per half-hour of E2b, the logistic-regression control of E3 and
 the share of people whose prediction differs between two of its models, the
 Brier score of E1 and its count of people who get a different answer, and the
-comparison of the autoregression with the naive forecast in E2a. They are
-marked as such in `docs/`.
+comparison of the autoregression with the naive forecast in E2a, and the
+sensitivity of E3 to the definition of "equally good". A later review found
+that the logistic regressions penalised their intercept; they now leave it
+almost free, which lowered the accuracy of the E1 regression from 0.683 to
+0.674. These changes are marked as such in `docs/`.
 
 ## Repository layout
 
@@ -105,6 +112,7 @@ src/common.py       seed, folders, bootstrap helpers
 src/data.py         download and preparation of the data sets
 src/e*.py           one script per experiment
 src/report_figures.py   figures of the written report
+src/run_all.py      runs everything and prints the time of each step
 docs/               methodology and results
 ```
 

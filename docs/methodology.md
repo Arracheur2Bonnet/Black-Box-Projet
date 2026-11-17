@@ -40,7 +40,7 @@ the current charge is a felony.
 
 | Method | Kind | Trained here |
 |---|---|---|
-| Sparse logistic regression (L1 penalty) | interpretable | yes |
+| Sparse logistic regression (L1 penalty, intercept not penalised) | interpretable | yes |
 | Decision tree of depth at most 3 | interpretable | yes |
 | Gradient boosting (LightGBM) | black box | yes |
 | COMPAS score (1 to 10) | reference | no |
@@ -164,7 +164,9 @@ criterion for an interpretable model.
 
 - The intervals are wide. There are only a few recessions in 35 years, and they
   account for most of the error, so differences between methods are hard to
-  establish.
+  establish. The only gap whose interval excludes zero (autoregression against
+  the naive forecast) was added after review, among twelve intervals computed
+  without any correction for multiple comparisons.
 - The Covid period was left out in the protocol, before the forecasts were
   run, but it holds the months in which the autoregression fails most. With
   them, the autoregression has the largest error instead of the smallest, so
@@ -359,9 +361,11 @@ effect; it does not measure it.
 - With seven inputs, of which two dominate, there is little room for rankings to
   differ. A data set with many correlated inputs would be a harder test.
 - The share of 23% grows with the number of models compared; the share between
-  two models (4.1%) does not. The design of the control matters as well: the
-  logistic regressions disagree for 21% of people when each sees part of the
-  rows, and for 12% when all see every row.
+  two models (4.1%) does not. It also depends on what "equally good" means: with
+  a condition on the Brier score as well as on the AUC, it falls to between 9%
+  and 17% (`outputs/e3_sensitivity.csv`). The design of the control matters as
+  well: the logistic regressions disagree for 25% of people when each sees part
+  of the rows, and for 16% when all see every row.
 - SHAP describes what a model does, not what causes re-arrest.
 
 ## References

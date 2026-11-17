@@ -48,9 +48,12 @@ def candidate_models():
     with two leaves), because on about 6,000 rows a large boosting model
     overfits and would make the black box look worse than it can be.
     """
+    # liblinear penalises the intercept like a coefficient; with a strong penalty
+    # this shifts every predicted risk. A large intercept_scaling makes the
+    # penalty on the intercept negligible (corrected after review).
     logistic = make_pipeline(
         StandardScaler(),
-        LogisticRegression(l1_ratio=1.0, solver="liblinear", random_state=SEED),
+        LogisticRegression(l1_ratio=1.0, solver="liblinear", intercept_scaling=1000, random_state=SEED),
     )
     logistic_grid = {"logisticregression__C": [0.003, 0.01, 0.03, 0.1, 1.0, 10.0]}
 
@@ -245,8 +248,8 @@ def different_answers(scores, labels, trained, idx):
     each method, the people whose yes/no prediction differs from the black
     box's, with a bootstrap interval over people. For the trained methods, we
     also give the average gap between the two predicted risks, and the share of
-    these people whose risk, averaged over the two models, lies between 0.4 and
-    0.6, that is, close to the threshold of 0.5.
+    these people for whom both predicted risks lie between 0.4 and 0.6, that
+    is, close to the threshold of 0.5.
     """
     decision_rows = []
     for name in scores:
@@ -256,12 +259,11 @@ def different_answers(scores, labels, trained, idx):
         low, high = percentile_interval(differ[idx].mean(axis=1))
         row = {"comparison": f"{BLACK_BOX} vs {name}", "people_with_a_different_answer": int(differ.sum()),
                "share": differ.mean(), "share_low": low, "share_high": high,
-               "mean_absolute_risk_gap": np.nan, "share_of_them_with_risk_from_0.4_to_0.6": np.nan}
+               "mean_absolute_risk_gap": np.nan, "share_of_them_with_both_risks_from_0.4_to_0.6": np.nan}
         if name in trained:
-            average_risk = (scores[BLACK_BOX] + scores[name]) / 2
+            near = [np.abs(scores[m][differ] - DECISION_THRESHOLD) <= NEAR_THRESHOLD for m in (BLACK_BOX, name)]
             row["mean_absolute_risk_gap"] = np.abs(scores[BLACK_BOX] - scores[name]).mean()
-            row["share_of_them_with_risk_from_0.4_to_0.6"] = (
-                np.abs(average_risk[differ] - DECISION_THRESHOLD) <= NEAR_THRESHOLD).mean()
+            row["share_of_them_with_both_risks_from_0.4_to_0.6"] = (near[0] & near[1]).mean()
         decision_rows.append(row)
     return pd.DataFrame(decision_rows)
 

@@ -12,10 +12,13 @@ equally accurate readable models also disagree, the disagreement comes from
 the multiplicity of good models (the Rashomon effect), not only from post-hoc
 explanations or black boxes.
 
+Sensitivity (added after review): the same disagreement measures when
+"equally good" also requires a Brier score close to the best one.
+
 Run:  python src/e3_rashomon.py
 Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv,
-e3_model_importance.csv, e3_example.csv, e3_example_models.csv, e3_control.csv
-and e3_figure.png.
+e3_model_importance.csv, e3_example.csv, e3_example_models.csv, e3_control.csv,
+e3_sensitivity.csv and e3_figure.png.
 """
 
 import itertools
@@ -30,7 +33,7 @@ import shap
 from lightgbm import LGBMClassifier
 from scipy.stats import kendalltau, rankdata
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -105,6 +108,33 @@ def keep_equally_accurate(candidates, rng):
     return aucs, good, kept
 
 
+def sensitivity_table(candidates, y_test):
+    """How much the disagreement depends on what "equally good" means (added after review).
+
+    Every candidate that meets the definition is used, not a draw of 50. The
+    AUC only looks at the ranking of people; adding a condition on the Brier
+    score also requires the predicted risks to be well calibrated, which leaves
+    fewer models that put a person on different sides of 0.5.
+    """
+    aucs = np.array([c[0] for c in candidates])
+    probas = np.array([c[2] for c in candidates])
+    briers = np.array([brier_score_loss(y_test, p) for p in probas])
+    near_best_auc = aucs >= aucs.max() - AUC_TOLERANCE
+    definitions = [(f"AUC within {AUC_TOLERANCE} of the best", near_best_auc)] + [
+        (f"AUC within {AUC_TOLERANCE} and Brier score within {t} of the best", near_best_auc & (briers <= briers.min() + t))
+        for t in (0.001, 0.002, 0.005)]
+    rows = []
+    for label, mask in definitions:
+        decisions = probas[mask] >= DECISION_THRESHOLD
+        n, yes = decisions.shape[0], decisions.sum(axis=0)
+        rows.append({"definition of equally good": label, "models": n,
+                     "share of people whose yes/no prediction differs between models":
+                         (decisions.any(axis=0) & ~decisions.all(axis=0)).mean(),
+                     "share of people whose yes/no prediction differs between two models":
+                         (yes * (n - yes) / (n * (n - 1) / 2)).mean()})
+    return pd.DataFrame(rows).round(4)
+
+
 def train_boostings(rng, X_train, y_train, X_test, y_test):
     """Train the N_CANDIDATES gradient boostings, each with settings drawn from `rng` and its own seed."""
     candidates = []
@@ -135,7 +165,8 @@ def logistic_control(X_train, y_train, X_test, y_test, subsample):
         else:
             rows = np.arange(len(X_train))
         penalty = float(np.exp(rng.uniform(np.log(0.003), np.log(10))))
-        model = make_pipeline(StandardScaler(), LogisticRegression(C=penalty, l1_ratio=1.0, solver="liblinear", random_state=SEED))
+        model = make_pipeline(StandardScaler(), LogisticRegression(C=penalty, l1_ratio=1.0, solver="liblinear",
+                                                                       intercept_scaling=1000, random_state=SEED))
         model.fit(X_train.iloc[rows], y_train.iloc[rows])
         candidates.append(scored(model, X_test, y_test))
     aucs, good, kept = keep_equally_accurate(candidates, rng)
@@ -364,6 +395,9 @@ def main():
     summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
 
     # Control: the same measures for 50 equally accurate logistic regressions, in two versions.
+    sensitivity = sensitivity_table(candidates, y_test)
+    sensitivity.to_csv(OUTPUT_DIR / "e3_sensitivity.csv", index=False)
+    print(sensitivity.to_string(index=False))
     families = control_families(probas, top, X_train, y_train, X_test, y_test)
     control = control_table(families, n_test)
     control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
