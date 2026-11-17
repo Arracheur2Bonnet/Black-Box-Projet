@@ -19,7 +19,9 @@ from matplotlib import font_manager
 
 from common import OUTPUT_DIR
 
-# One colour per kind of model, the same in every figure.
+# One colour per kind of model, the same in every figure. These colours are those
+# of the written report; the quick-look figures of the experiment scripts use the
+# colours of common.py.
 INTERPRETABLE = "#FA520F"   # orange
 ADDITIVE = "#FDA47E"        # light orange: readable curve by curve
 BLACK_BOX = "#151515"       # black
@@ -35,6 +37,7 @@ VARIABLE_NAMES = {"priors_count": "prior offenses", "age": "age", "felony_charge
 
 
 def set_style(font_folder):
+    """Common style of the four figures; with `font_folder`, the Archivo font files found in it are used."""
     if font_folder:
         for path in Path(font_folder).glob("Archivo-*.ttf"):
             font_manager.fontManager.addfont(str(path))
@@ -49,6 +52,7 @@ def set_style(font_folder):
 
 
 def save(fig, name):
+    """Save a figure in outputs/report/, as PDF and as PNG at 300 dpi."""
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(REPORT_DIR / f"{name}.pdf")
     fig.savefig(REPORT_DIR / f"{name}.png", dpi=300)
@@ -65,9 +69,10 @@ def colour_key(ax, entries, y=1.04, gap=0.025):
 def bars_with_intervals(ax, rows, start, number_format):
     """Horizontal bars from `start`, with the 95% interval and the value written at the end.
 
-    rows: list of (label, colour, value, low, high), from top to bottom.
+    rows: list of (label, colour, value, low, high), from top to bottom. The
+    labels are written once, on the vertical axis, after the bars.
     """
-    for position, (label, color, value, low, high) in enumerate(reversed(rows)):
+    for position, (_, color, value, low, high) in enumerate(reversed(rows)):
         ax.barh(position, value - start, left=start, color=color, height=0.62)
         # 95% interval: a grey line with a white edge, visible on any bar and in grey-scale print.
         ax.plot([low, high], [position, position], color="white", linewidth=2.6, solid_capstyle="butt")
@@ -86,7 +91,9 @@ def figure_e1():
             ("Rudin (2019) rule list", "Rudin's three rules", REFERENCE),
             ("COMPAS score", "COMPAS score", REFERENCE)]
     rows = [(label, color, *results.loc[key, ["accuracy", "accuracy_low", "accuracy_high"]]) for key, label, color in spec]
-    baseline = 0.545   # accuracy of always predicting "no new arrest"
+    # Accuracy of always predicting "no new arrest": 1 minus the re-arrest rate of
+    # 45.5%. e1_compas.py prints it but writes it in no file, so it is set here.
+    baseline = 0.545
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.7))
     bars_with_intervals(ax, rows, baseline, "{:.3f}")
@@ -111,12 +118,16 @@ def figure_e2a():
     error = results[results["period"] == "without Covid period"].set_index("method")["rmse"]
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.75))
+    # Shaded: the US recessions as dated by the NBER (July 1990 to March 1991,
+    # March to November 2001, December 2007 to June 2009).
     for start, end in (("1990-07", "1991-03"), ("2001-03", "2001-11"), ("2007-12", "2009-06")):
         ax.axvspan(pd.Timestamp(start), pd.Timestamp(end), color="#F3F0E8", linewidth=0)
     ax.axvspan(pd.Timestamp("2020-03"), pd.Timestamp("2021-12"), facecolor="none", edgecolor="#C9C1AE",
                hatch="////", linewidth=0)
     ax.text(pd.Timestamp("2022-03"), 11.3, "Covid period,\nleft out of the error", fontsize=7, color=MUTE,
             ha="left", va="center", linespacing=1.1)
+    # The axis stops at 12%, below the peak of April 2020, which the arrow points
+    # to: a taller axis would flatten the other years.
     ax.annotate("Apr 2020: 14.8%", (pd.Timestamp("2020-04"), 12), xytext=(pd.Timestamp("2015-06"), 11.0),
                 fontsize=7, color=MUTE, ha="center", arrowprops={"arrowstyle": "->", "color": MUTE, "linewidth": 0.6})
     ax.plot(dates, f["actual"], color="#C9C1AE", linewidth=2.6, label="actual rate")
@@ -176,6 +187,8 @@ def figure_e3():
     two_models = pd.read_csv(OUTPUT_DIR / "e3_example_models.csv").set_index("model")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 1.95), gridspec_kw={"width_ratios": [1.25, 1]})
+    # One cell per variable and rank (ranks 1 to 7, one per variable); the darker
+    # the cell, the more of the 50 models give that rank.
     for row, variable in enumerate(order):
         for rank in range(1, 8):
             count = ranks.loc[variable, f"rank {rank}"]
@@ -193,6 +206,8 @@ def figure_e3():
     left.spines[["left", "bottom"]].set_visible(False)
     left.tick_params(axis="x", length=0)
 
+    # The three variables with the largest SHAP values for this man, in both
+    # models; "felony charge = 0" is written "no felony charge", which reads better.
     shown = ["priors_count", "age", "felony_charge"]
     for position, variable in enumerate(reversed(shown)):
         right.barh(position + 0.19, example.loc[variable, "SHAP in model A"], height=0.36, color=BLACK_BOX)
@@ -212,6 +227,7 @@ def figure_e3():
 
 
 def main():
+    """Draw the four figures of the report from the result files in outputs/."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--fonts", help="folder that contains the Archivo font files")
     args = parser.parse_args()
