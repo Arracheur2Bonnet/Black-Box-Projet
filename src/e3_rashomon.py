@@ -5,14 +5,17 @@ different settings and random seeds, keep 50 whose test AUC is within 0.01 of
 the best one, and explain each of them with SHAP. We then measure how much the
 50 explanations agree, for the data set as a whole and for each person.
 
-Control (added after review): the same procedure with 200 sparse logistic
-regressions instead of gradient boostings. If equally accurate readable models
-disagree as much, the disagreement comes from the multiplicity of good models
-(the Rashomon effect), not from post-hoc explanations or black boxes.
+Control (added after review): the same measures for 200 sparse logistic
+regressions instead of gradient boostings, drawn in two ways (each on a random
+share of the rows, or all on every row with only the penalty varying). If
+equally accurate readable models also disagree, the disagreement comes from
+the multiplicity of good models (the Rashomon effect), not only from post-hoc
+explanations or black boxes.
 
 Run:  python src/e3_rashomon.py
-Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv, e3_example.csv,
-e3_example_models.csv, e3_control.csv and e3_figure.png.
+Writes outputs/e3_summary.csv, e3_ranks.csv, e3_model_ranks.csv,
+e3_model_importance.csv, e3_example.csv, e3_example_models.csv, e3_control.csv
+and e3_figure.png.
 """
 
 import itertools
@@ -70,20 +73,26 @@ def shap_values(model, X):
     return values
 
 
-def logistic_control(X_train, y_train, X_test, y_test):
+def logistic_control(X_train, y_train, X_test, y_test, subsample):
     """50 equally accurate sparse logistic regressions, drawn like the 50 gradient boostings.
 
-    Each candidate has its own penalty (from 0.003 to 10, on a log scale) and is
-    trained on a random 50 to 90% of the training rows. For a linear model, the
-    contribution of a variable to one prediction is exactly its coefficient
-    times the gap between the person's value and the average value, which is
-    also its SHAP value. Returns the predicted risks and the main variable of
-    each person in each kept model.
+    Each candidate has its own penalty (from 0.003 to 10, on a log scale). With
+    `subsample`, each candidate is also trained on a random 50 to 90% of the
+    training rows, the share that each tree of a boosting sees; a boosting as a
+    whole, however, sees every row. Without it, every candidate sees all the
+    rows and only the penalty varies. For a linear model, the contribution of a
+    variable to one prediction is exactly its coefficient times the gap between
+    the person's value and the average value, which is also its SHAP value.
+    Returns the predicted risks and the main variable of each person in each
+    kept model.
     """
     rng = np.random.default_rng(SEED + 1)      # separate from the draws of the boostings
     candidates = []
     for _ in range(N_CANDIDATES):
-        rows = rng.choice(len(X_train), size=int(len(X_train) * rng.uniform(0.5, 0.9)), replace=False)
+        if subsample:
+            rows = rng.choice(len(X_train), size=int(len(X_train) * rng.uniform(0.5, 0.9)), replace=False)
+        else:
+            rows = np.arange(len(X_train))
         penalty = float(np.exp(rng.uniform(np.log(0.003), np.log(10))))
         model = make_pipeline(StandardScaler(), LogisticRegression(C=penalty, l1_ratio=1.0, solver="liblinear", random_state=SEED))
         model.fit(X_train.iloc[rows], y_train.iloc[rows])
@@ -101,15 +110,28 @@ def logistic_control(X_train, y_train, X_test, y_test):
     return probas, np.array(top), len(good), aucs[kept]
 
 
+FLIP_ANY = "share of people whose yes/no prediction differs between models"
+
+
 def agreement_measures(probas, top):
-    """Per-person indicators: yes/no differs, same main variable in all models, share of agreeing pairs."""
+    """One value per person for each measure; the measure itself is the average over people.
+
+    The first measure counts a person as soon as one model disagrees with the
+    others, so it grows with the number of models compared. The second one
+    does not: for each person, it is the share of pairs of models that give
+    different answers, so its average is the share of people whose answer
+    differs between two models drawn at random.
+    """
     decisions = probas >= 0.5
+    n = decisions.shape[0]
     flips = decisions.any(axis=0) & ~decisions.all(axis=0)
+    yes = decisions.sum(axis=0)
+    pair_flips = yes * (n - yes) / (n * (n - 1) / 2)
     same_all = np.array([len(np.unique(top[:, j])) == 1 for j in range(top.shape[1])])
-    n = top.shape[0]
     pair_share = np.array([(np.bincount(top[:, j]).astype(float) * (np.bincount(top[:, j]) - 1)).sum()
                            / (n * (n - 1)) for j in range(top.shape[1])])
-    return {"share of people whose yes/no prediction differs between models": flips,
+    return {FLIP_ANY: flips,
+            "average share of people whose yes/no prediction differs between two models": pair_flips,
             "share of people with the same main variable in all models": same_all,
             "average share of people with the same main variable in two models": pair_share}
 
@@ -189,21 +211,36 @@ def main():
     summary.to_csv(OUTPUT_DIR / "e3_summary.csv", index=False)
 
     # ---- Control: the same measures for 50 equally accurate logistic regressions ----
+    # Two versions of the control: each regression trained on a random 50 to 90%
+    # of the rows, or all of them trained on every row with only the penalty varying.
+    families = {"gradient boosting": (probas, top)}
+    for family, subsample in (("sparse logistic regression, each on 50-90% of rows", True),
+                              ("sparse logistic regression, all rows", False)):
+        control_probas, control_top, control_good, control_aucs = logistic_control(
+            X_train, y_train, X_test, y_test, subsample)
+        families[family] = (control_probas, control_top)
+        print(f"\nControl ({family}): {control_good} of {N_CANDIDATES} within {AUC_TOLERANCE} AUC of the best; "
+              f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
     # Intervals: the 1,852 people of the test set are resampled 2,000 times.
-    control_probas, control_top, control_good, control_aucs = logistic_control(X_train, y_train, X_test, y_test)
     people = np.random.default_rng(SEED + 2).integers(0, n_test, size=(2000, n_test))
     control_rows = []
-    for family, measures in (("gradient boosting", agreement_measures(probas, top)),
-                             ("sparse logistic regression", agreement_measures(control_probas, control_top))):
+    for family, (family_probas, family_top) in families.items():
+        measures = agreement_measures(family_probas, family_top)
         for measure, per_person in measures.items():
             resampled = per_person[people].mean(axis=1)
             control_rows.append({"family": family, "measure": measure, "value": per_person.mean(),
                                  "low": np.quantile(resampled, 0.025), "high": np.quantile(resampled, 0.975)})
+        # Are the people whose answer changes the borderline cases? Among them,
+        # the share whose risk, averaged over the 50 models, is from 0.4 to 0.6.
+        flips = measures[FLIP_ANY]
+        near = np.abs(family_probas.mean(axis=0) - 0.5) <= 0.1
+        resampled = (flips & near)[people].sum(axis=1) / flips[people].sum(axis=1)
+        control_rows.append({"family": family, "value": (flips & near).sum() / flips.sum(),
+                             "measure": "among these people, share whose average risk is from 0.4 to 0.6",
+                             "low": np.quantile(resampled, 0.025), "high": np.quantile(resampled, 0.975)})
     control = pd.DataFrame(control_rows)
     control["value"] = control["value"].astype(float)
     control.round(4).to_csv(OUTPUT_DIR / "e3_control.csv", index=False)
-    print(f"\nControl: {control_good} of {N_CANDIDATES} logistic regressions within {AUC_TOLERANCE} AUC of the best; "
-          f"{len(control_aucs)} kept, AUC from {control_aucs.min():.3f} to {control_aucs.max():.3f}")
     print(control.round(3).to_string(index=False))
 
     rank_table = pd.DataFrame(
@@ -217,6 +254,13 @@ def main():
     model_ranks.insert(0, "auc", kept_aucs.round(4))
     model_ranks.insert(0, "model", np.arange(1, len(models) + 1))
     model_ranks.to_csv(OUTPUT_DIR / "e3_model_ranks.csv", index=False)
+
+    # The importance behind these ranks: mean absolute SHAP value of each variable
+    # in each model (log-odds). It shows how much more the first variables weigh.
+    model_importance = pd.DataFrame(importance.round(4), columns=COMPAS_FEATURES)
+    model_importance.insert(0, "auc", kept_aucs.round(4))
+    model_importance.insert(0, "model", np.arange(1, len(models) + 1))
+    model_importance.to_csv(OUTPUT_DIR / "e3_model_importance.csv", index=False)
 
     # ---- 3. One person, two models, two explanations ------------------------------
     # Among the people whose top variable differs between two models, take the

@@ -8,7 +8,8 @@ We compare, on the same people and with the same protocol:
     re-arrest" baseline for accuracy.
 
 Run:  python src/e1_compas.py
-Writes outputs/e1_results.csv, e1_gaps.csv, e1_models.txt and e1_figure.png.
+Writes outputs/e1_results.csv, e1_gaps.csv, e1_decisions.csv, e1_models.txt
+and e1_figure.png.
 """
 
 import warnings
@@ -221,9 +222,33 @@ def main():
         gap_rows.append(row)
     gaps = pd.DataFrame(gap_rows)
 
-    # ---- 4. Save and print ---------------------------------------------------
+    # ---- 4. Same people, different answers? (added after review) ------------
+    # A small gap in AUC can still change the answer given to some people. For
+    # each method, the people whose yes/no prediction differs from the black
+    # box's, with a bootstrap interval over people. For the trained methods,
+    # we also give the average gap between the two predicted risks, and the
+    # share of these people whose risk, averaged over the two models, lies
+    # between 0.4 and 0.6, that is, close to the threshold of 0.5.
+    decision_rows = []
+    for name in scores:
+        if name == BLACK_BOX:
+            continue
+        differ = labels[BLACK_BOX] != labels[name]
+        low, high = percentile_interval(differ[idx].mean(axis=1))
+        row = {"comparison": f"{BLACK_BOX} vs {name}", "people_with_a_different_answer": int(differ.sum()),
+               "share": differ.mean(), "share_low": low, "share_high": high,
+               "mean_absolute_risk_gap": np.nan, "share_of_them_with_risk_from_0.4_to_0.6": np.nan}
+        if name in trained:
+            average_risk = (scores[BLACK_BOX] + scores[name]) / 2
+            row["mean_absolute_risk_gap"] = np.abs(scores[BLACK_BOX] - scores[name]).mean()
+            row["share_of_them_with_risk_from_0.4_to_0.6"] = (np.abs(average_risk[differ] - 0.5) <= 0.1).mean()
+        decision_rows.append(row)
+    decisions = pd.DataFrame(decision_rows)
+
+    # ---- 5. Save and print ---------------------------------------------------
     results.round(6).to_csv(OUTPUT_DIR / "e1_results.csv", index=False)
     gaps.round(6).to_csv(OUTPUT_DIR / "e1_gaps.csv", index=False)
+    decisions.round(6).to_csv(OUTPUT_DIR / "e1_decisions.csv", index=False)
     (OUTPUT_DIR / "e1_models.txt").write_text(describe_final_models(models, X, y, chosen), encoding="utf-8")
 
     pd.set_option("display.width", 200)
@@ -232,6 +257,8 @@ def main():
     print(f"\nBaseline accuracy (always predict no re-arrest): {baseline_accuracy:.3f}")
     print("\nGaps (AUC, accuracy: positive = the black box is better; Brier: negative = the black box is better)")
     print(gaps.round(3).to_string(index=False))
+    print("\nPeople whose yes/no prediction differs from the black box's")
+    print(decisions.round(3).to_string(index=False))
 
     make_figure(results, baseline_accuracy)
     print(f"\nFiles written in {OUTPUT_DIR}")

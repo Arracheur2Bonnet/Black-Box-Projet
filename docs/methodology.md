@@ -10,6 +10,10 @@ model with at most 10 variables, or a decision tree of depth at most 3 (at most
 8 leaves). A black box is a model whose predictions cannot be read from its
 structure, such as a sum of hundreds of trees.
 
+The additive models of E2b have no short formula and go beyond this criterion.
+We report them, marked as such, because Rudin (2019) counts additive models as
+interpretable: each of their curves can be plotted and read.
+
 ## E1: what does interpretability cost in accuracy?
 
 Script: `src/e1_compas.py`
@@ -70,6 +74,10 @@ the 2019 version.
    and recompute every measure and every gap on each resample. The interval
    reported is the central 95% of these values. If the interval of a gap
    contains zero, the gap cannot be told apart from chance.
+5. **Same people, different answers (added after review).** An average gap
+   can hide individual differences, so we also count the people whose yes/no
+   prediction differs between the black box and each other method, and we
+   check whether their predicted risk is close to the threshold of 0.5.
 
 ### Limits
 
@@ -157,6 +165,11 @@ criterion for an interpretable model.
 - The intervals are wide. There are only a few recessions in 35 years, and they
   account for most of the error, so differences between methods are hard to
   establish.
+- The Covid period was left out in the protocol, before the forecasts were
+  run, but it holds the months in which the autoregression fails most. With
+  them, the autoregression has the largest error instead of the smallest, so
+  the ranking of the models is not robust; only the absence of an advantage
+  for the black box holds in both cases.
 - We use one release of the data. Many series are revised after their first
   publication and are published with a delay, so a forecaster at the time had
   slightly different and older numbers.
@@ -228,13 +241,16 @@ All models receive the same information:
 - **Linear regression per half-hour.** The same 9 variables, but one equation
   for each of the 48 half-hours of the day, so that every effect (heat, cold,
   working day, past demand) may change with the time of day. Each equation
-  respects our limit of 10 variables. This is the structure of the load
-  forecasting models of Fan and Hyndman (2012), who fit a separate model for
-  each half-hour.
+  respects our limit of 10 variables, but the model has 480 numbers in all (48
+  equations of an intercept and 9 coefficients). They are meant to be read as
+  curves over the day, one per variable, rather than one by one. This is the
+  structure of the load forecasting models of Fan and Hyndman (2012), who fit a
+  separate model for each half-hour.
 - **Additive model per half-hour.** A gradient boosting whose trees have three
   leaves and may only use the half-hour and one other input. The model is a sum
   of eight maps, one per input, each showing how the effect of that input
-  changes with the time of day.
+  changes with the time of day. Like the additive model, it has no short
+  formula and goes beyond our criterion.
 - **Gradient boosting.** Its trees have several leaves and can combine inputs.
 
 The two models per half-hour were added after a review of the first version of
@@ -256,8 +272,9 @@ literature before being run, and their settings were chosen like the others.
 4. **Uncertainty.** We resample the 365 test days in blocks of 7 consecutive
    days, 2,000 times, and report the central 95% of the values.
 5. **Peaks.** We also report the errors on the 1% of half-hours with the highest
-   demand (175 half-hours). This table was added after looking at the forecasts
-   of the hottest week, so it is a description and not a planned test.
+   demand (175 half-hours from 11 days, mostly one heat wave). This table was
+   added after looking at the forecasts of the hottest week and has no
+   interval, so it is a description and not a planned test.
 
 ### Limits
 
@@ -309,15 +326,21 @@ model, just as accurate, would have given the same explanation.
      ignored).
 6. We also compare the predictions themselves: the gap between the highest and
    the lowest risk given to the same person by the 50 models, and whether the
-   yes/no prediction changes.
+   yes/no prediction changes. A person is counted as soon as one of the 50
+   models disagrees with the others, so this share grows with the number of
+   models compared. We therefore also give the share of people whose
+   prediction differs between two models, averaged over all pairs (added after
+   review).
 7. **Control (added after review).** We repeat steps 2 to 6 with 200 sparse
-   logistic regressions, each with its own penalty and a random 50 to 90% of
-   the training rows. For a linear model, the contribution of a variable to one
-   prediction is its coefficient times the gap between the person's value and
-   the average value, which is also its exact SHAP value. If equally accurate
-   readable models disagree as much, the disagreement comes from the
-   multiplicity of good models (the Rashomon effect), not from post-hoc
-   explanations.
+   logistic regressions, each with its own penalty, in two versions. In the
+   first, each regression is trained on a random 50 to 90% of the training
+   rows, the share that each tree of a boosting sees. In the second, every
+   regression sees all the rows and only the penalty varies. For a linear
+   model, the contribution of a variable to one prediction is its coefficient
+   times the gap between the person's value and the average value, which is
+   also its exact SHAP value. If equally accurate readable models also
+   disagree, part of the disagreement comes from the multiplicity of good
+   models (the Rashomon effect), not from post-hoc explanations.
 8. **Uncertainty.** The shares of people are given with a 95% interval,
    obtained by resampling the 1,852 test people 2,000 times.
 
@@ -335,6 +358,10 @@ effect; it does not measure it.
   we only need them to be about equally accurate.
 - With seven inputs, of which two dominate, there is little room for rankings to
   differ. A data set with many correlated inputs would be a harder test.
+- The share of 23% grows with the number of models compared; the share between
+  two models (4.1%) does not. The design of the control matters as well: the
+  logistic regressions disagree for 21% of people when each sees part of the
+  rows, and for 12% when all see every row.
 - SHAP describes what a model does, not what causes re-arrest.
 
 ## References

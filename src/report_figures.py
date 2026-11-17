@@ -88,7 +88,7 @@ def figure_e1():
     rows = [(label, color, *results.loc[key, ["accuracy", "accuracy_low", "accuracy_high"]]) for key, label, color in spec]
     baseline = 0.545   # accuracy of always predicting "no new arrest"
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.85))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.7))
     bars_with_intervals(ax, rows, baseline, "{:.3f}")
     ax.set_xlim(baseline, 0.715)
     ax.set_xticks([baseline, 0.58, 0.62, 0.66, 0.70], ["0.545\nalways “no”", "0.58", "0.62", "0.66", "0.70"])
@@ -100,23 +100,32 @@ def figure_e1():
 
 
 def figure_e2a():
-    """US unemployment rate and the forecasts made twelve months earlier."""
+    """US unemployment rate and the forecasts made twelve months earlier.
+
+    The legend gives the error of each forecast outside the Covid period, the
+    period over which the models are compared (root mean squared error, points).
+    """
     f = pd.read_csv(OUTPUT_DIR / "e2a_forecasts.csv")
     dates = pd.PeriodIndex(f["month"], freq="M").to_timestamp()
+    results = pd.read_csv(OUTPUT_DIR / "e2a_results.csv")
+    error = results[results["period"] == "without Covid period"].set_index("method")["rmse"]
 
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.85))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.75))
     for start, end in (("1990-07", "1991-03"), ("2001-03", "2001-11"), ("2007-12", "2009-06")):
         ax.axvspan(pd.Timestamp(start), pd.Timestamp(end), color="#F3F0E8", linewidth=0)
     ax.axvspan(pd.Timestamp("2020-03"), pd.Timestamp("2021-12"), facecolor="none", edgecolor="#C9C1AE",
                hatch="////", linewidth=0)
-    ax.text(pd.Timestamp("2021-01"), 2.7, "Covid", fontsize=7, color=MUTE, ha="center", va="bottom")
+    ax.text(pd.Timestamp("2022-03"), 11.3, "Covid period,\nleft out of the error", fontsize=7, color=MUTE,
+            ha="left", va="center", linespacing=1.1)
     ax.annotate("Apr 2020: 14.8%", (pd.Timestamp("2020-04"), 12), xytext=(pd.Timestamp("2015-06"), 11.0),
                 fontsize=7, color=MUTE, ha="center", arrowprops={"arrowstyle": "->", "color": MUTE, "linewidth": 0.6})
-    ax.plot(dates, f["actual"], color="#8C8270", linewidth=2.4, label="actual rate")
-    ax.plot(dates, f["Autoregressive model"], color=ADDITIVE, linewidth=1.0, linestyle=(0, (3, 1.5)),
-            label="autoregression")
-    ax.plot(dates, f["Sparse linear model"], color=INTERPRETABLE, linewidth=0.95, label="sparse linear model")
-    ax.plot(dates, f["Gradient boosting"], color=BLACK_BOX, linewidth=0.95, label="gradient boosting (black box)")
+    ax.plot(dates, f["actual"], color="#C9C1AE", linewidth=2.6, label="actual rate")
+    ax.plot(dates, f["Autoregressive model"], color=INTERPRETABLE, linewidth=1.1,
+            label=f"autoregression: {error['Autoregressive model']:.2f}")
+    ax.plot(dates, f["Sparse linear model"], color=ADDITIVE, linewidth=1.1,
+            label=f"sparse linear model: {error['Sparse linear model']:.2f}")
+    ax.plot(dates, f["Gradient boosting"], color=BLACK_BOX, linewidth=0.95,
+            label=f"gradient boosting (black box): {error['Gradient boosting']:.2f}")
     ax.set_ylim(2.5, 12)
     ax.set_xlim(dates[0], dates[-1])
     ax.set_ylabel("unemployment rate (%)")
@@ -138,7 +147,7 @@ def figure_e2b():
     rows = [(label, color, *results.loc[key, ["mape", "mape_low", "mape_high"]]) for key, label, color in spec]
     coefficients = pd.read_csv(OUTPUT_DIR / "e2b_halfhour_coefficients.csv")
 
-    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.1), gridspec_kw={"width_ratios": [1.75, 1]})
+    fig, (left, right) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 1.95), gridspec_kw={"width_ratios": [1.75, 1]})
     bars_with_intervals(left, rows, 0, "{:.1f}%")
     left.axhline(1.5, color=MUTE, linewidth=0.6, linestyle=":")   # the two models below were added after review
     left.set_xlim(0, 10.6)
@@ -192,13 +201,13 @@ def figure_e3():
               for v in reversed(shown)]
     right.set_yticks(range(len(shown)), labels)
     right.axvline(0, color=MUTE, linewidth=0.6)
-    right.set_xlabel("SHAP value, log-odds of re-arrest")
+    right.set_xlabel("SHAP value (log-odds)")
     right.set_title("One man, two models")
     right.tick_params(axis="x", colors=MUTE)
     colour_key(right, ((BLACK_BOX, f"model A: risk {two_models.loc['A', 'predicted_risk']:.2f}", -0.42),
-                       (REFERENCE, f"model B: risk {two_models.loc['B', 'predicted_risk']:.2f}", 0.28)), y=-0.52, gap=0.05)
+                       (REFERENCE, f"model B: risk {two_models.loc['B', 'predicted_risk']:.2f}", 0.28)), y=-0.49, gap=0.05)
     fig.tight_layout(pad=0.4, w_pad=1.4)
-    fig.subplots_adjust(bottom=0.3)
+    fig.subplots_adjust(bottom=0.31)
     save(fig, "fig4_e3_explanations")
 
 

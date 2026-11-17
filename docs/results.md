@@ -7,7 +7,7 @@ such below.
 
 ## E1: what does interpretability cost in accuracy?
 
-COMPAS data, 6,172 people. Run time: about 2 minutes.
+COMPAS data, 6,172 people. Run time: about 2.5 minutes.
 
 | Method | Kind | AUC | Accuracy | Brier score |
 |---|---|---|---|---|
@@ -34,11 +34,26 @@ Gap between the gradient boosting and each other method:
 A positive AUC or accuracy gap, and a negative Brier gap, mean that the black
 box is better.
 
+People whose yes/no prediction differs from that of the gradient boosting
+(added after review). The last column gives, among these people, the share
+whose predicted risk, averaged over the two models, is between 0.4 and 0.6,
+that is, close to the threshold of 0.5:
+
+| Gradient boosting vs | People | Share of the 6,172 | Risk between 0.4 and 0.6 |
+|---|---|---|---|
+| Sparse logistic regression | 351 | 5.7% [5.1, 6.3] | 100% |
+| Decision tree (depth at most 3) | 663 | 10.7% [10.0, 11.5] | 99% |
+| COMPAS score (5 or more) | 1,581 | 25.6% [24.5, 26.7] | |
+| Rudin (2019) rule list | 849 | 13.8% [12.9, 14.6] | |
+
 What the numbers show:
 
 - The black box and the sparse logistic regression have the same accuracy. On
   finer measures the black box is slightly ahead (0.005 of AUC, 0.006 of Brier
-  score): the gaps are real but too small to change a decision about a person.
+  score). These gaps are small, but they still change the answer given to some
+  people: the two models give a different yes/no prediction to 351 of the
+  6,172 people (5.7%), all of them with a predicted risk between 0.4 and 0.6.
+  The average gap between the two predicted risks is 0.066.
 - The published rule list is as accurate as the COMPAS score on our data (0.667
   against 0.661). It was learned by others on Broward County data that overlap
   ours, so its accuracy is partly measured on the data it was learned from.
@@ -69,7 +84,8 @@ The data did not reward combining variables.
 
 Change in the US unemployment rate over 12 months, 429 forecasts from January
 1990 to September 2025. Errors are root mean squared errors (RMSE) in
-percentage points of unemployment. Run time: about 1 minute.
+percentage points of unemployment. The Covid period is made of the forecasts
+for March 2020 to December 2021. Run time: about 2.5 minutes.
 
 | Method | Kind | RMSE, all months | RMSE, without Covid period |
 |---|---|---|---|
@@ -78,28 +94,36 @@ percentage points of unemployment. Run time: about 1 minute.
 | Sparse linear model | interpretable | 1.53 [0.70, 2.33] | 0.93 [0.60, 1.32] |
 | Gradient boosting | black box | 1.51 [0.76, 2.23] | 0.97 [0.64, 1.22] |
 
-Gap in RMSE without the Covid period (negative means the first method is
-better):
+Gap in RMSE (negative means the first method is better):
 
-| Comparison | RMSE gap |
-|---|---|
-| Gradient boosting minus sparse linear model | 0.04 [-0.18, 0.25] |
-| Gradient boosting minus autoregressive model | 0.15 [-0.03, 0.30] |
-| Gradient boosting minus naive | 0.01 [-0.19, 0.20] |
-| Sparse linear model minus naive | -0.03 [-0.11, 0.03] |
-| Autoregressive model minus naive (added after review) | -0.14 [-0.23, -0.04] |
+| Comparison | Without Covid period | All months |
+|---|---|---|
+| Gradient boosting minus sparse linear model | 0.04 [-0.18, 0.25] | -0.02 [-0.17, 0.15] |
+| Gradient boosting minus autoregressive model | 0.15 [-0.03, 0.30] | -0.32 [-0.88, 0.21] |
+| Gradient boosting minus naive | 0.01 [-0.19, 0.20] | -0.02 [-0.16, 0.13] |
+| Sparse linear model minus autoregressive model | 0.11 [-0.02, 0.22] | -0.29 [-0.78, 0.19] |
+| Sparse linear model minus naive | -0.03 [-0.11, 0.03] | 0.00 [-0.08, 0.06] |
+| Autoregressive model minus naive (added after review) | -0.14 [-0.23, -0.04] | 0.30 [-0.20, 0.82] |
 
 What the numbers show:
 
-- The black box does not win. Outside the Covid period its error (0.97) is no
-  lower than that of the sparse linear model (0.93).
-- The most accurate forecast comes from the simplest readable model, the
-  autoregression on the unemployment rate alone (0.82). It is the only method
-  that beats the naive forecast: the interval of its gap excludes zero.
+- The black box does not beat the readable models. Outside the Covid period its
+  error (0.97) is no lower than that of the sparse linear model (0.93) or of the
+  autoregression (0.82).
+- Outside the Covid period, the lowest error comes from the simplest readable
+  model, the autoregression on the unemployment rate alone (0.82). It is the
+  only method whose gap with the naive forecast excludes zero. Its lead over
+  the sparse linear model (0.11) and the gradient boosting (0.15) is not
+  significant: both intervals contain zero.
+- With the Covid period included, the ranking reverses: the autoregression has
+  the largest error (1.82, against 1.51 for the gradient boosting). In April
+  2020, with unemployment at 14.8%, it carried the jump forward and forecast
+  26.1% for April 2021 (actual: 6.1%); the other two models also overshot, to
+  17.1% and 15.2%. No gap can then be told apart from zero. The comparison
+  without the Covid period was fixed in the protocol before the forecasts were
+  run; it still removes the months in which the autoregression fails most.
 - Forecasting unemployment a year ahead is hard for every model: the forecasts
   follow the turning points with a delay instead of announcing them.
-- With all months included, the Covid jump of April 2020 dominates the error
-  and the intervals become too wide to compare anything.
 - From 2023 to 2025, the forecasts of the gradient boosting stay well above the
   observed rate, while the linear models come back to it, most likely because
   the extreme values of 2020 entered its training data.
@@ -159,10 +183,13 @@ What the numbers show:
   additive model whose curves may change with the half-hour is 0.08 point
   behind, and that gap is not distinguishable from zero.
 - The cost of interpretability therefore depends on the structure given to the
-  readable model: about two points for the simplest, almost nothing for those
-  built as in the load forecasting literature (Fan and Hyndman, 2012). The
-  black box found this structure by itself; the readable models needed it from
-  domain knowledge.
+  readable model: about two points for the simplest; 0.3 point, or 10% of the
+  error, for the regression per half-hour, each of whose 48 equations meets our
+  criterion of at most 10 variables; nothing measurable for the additive model
+  per half-hour, which has no short formula and goes beyond the criterion. The
+  models per half-hour follow the load forecasting literature (Fan and Hyndman,
+  2012). The black box found this structure by itself; the readable models
+  needed it from domain knowledge.
 
 The readable models can be read in full. The single linear regression is:
 
@@ -190,7 +217,8 @@ boosting is a sum of 1,000 trees with 8 leaves each and cannot be read directly.
 
 Errors on the 175 half-hours with the highest demand of 2014 (11 days, mostly
 during the heat wave of 13 to 17 January). This table was added after looking at
-the forecasts of the hottest week:
+the forecasts of the hottest week. It has no interval and covers a single heat
+wave, so it describes these days and does not test a difference:
 
 | Method | MAPE | Mean error |
 |---|---|---|
@@ -214,6 +242,11 @@ the forecasts of the hottest week:
 
 COMPAS data, 1,852 people in the test set. Run time: about 1 minute.
 
+Two of the measures below count people whose yes/no prediction differs. The
+first counts a person as soon as one of the 50 models disagrees with the
+others, so it grows with the number of models compared. The second is the
+share of people whose prediction differs between two models drawn at random.
+
 Of the 200 gradient boostings trained, 144 are within 0.01 AUC of the best one
 (0.728). The 50 models kept have a test AUC between 0.719 and 0.728.
 
@@ -226,7 +259,8 @@ Of the 200 gradient boostings trained, 144 are within 0.01 AUC of the best one
 | One person | People with the same main variable in all 50 models | 64% |
 | One person | People with a variable whose effect clearly changes sign between models | 11% |
 | Prediction | Median gap between the highest and lowest risk given to one person | 0.17 |
-| Prediction | People whose yes/no prediction differs between models | 23% |
+| Prediction | People whose yes/no prediction differs in at least one of the 50 models | 23% |
+| Prediction | People whose yes/no prediction differs between two models (average over pairs) | 4.1% |
 
 Number of models, out of 50, that give each importance rank to each variable:
 
@@ -243,26 +277,52 @@ Number of models, out of 50, that give each importance rank to each variable:
 A variable that a model does not use at all is ranked last. This happens in 15
 of the 50 models, mostly for the number of juvenile felonies.
 
-Control (added after review): the same measures for 50 equally accurate sparse
-logistic regressions (198 of 200 were within 0.01 AUC of the best one).
+The ranks hide how far apart the variables are. Measured by the mean absolute
+SHAP value, age, the second variable, weighs about five times as much as the
+third one in the median model, and twice as much in the model where they are
+closest. None of the five other variables exceeds 0.12 in any model, and the
+first two make up 83% of the total importance in the median model. In model 1,
+for example: priors 0.69, age 0.45, felony charge 0.09, sex 0.07, other
+juvenile offenses 0.06, juvenile felonies 0.02, juvenile misdemeanors 0.01
+(`outputs/e3_model_importance.csv`).
 
-| Measure | Gradient boostings | Logistic regressions |
-|---|---|---|
-| People whose yes/no prediction differs between models | 23% [21, 25] | 21% [19, 23] |
-| People with the same main variable in all 50 models | 64% [62, 66] | 68% [66, 70] |
-| People with the same main variable in two models | 92% [91, 92] | 92% [91, 93] |
+Control (added after review): the same measures for 50 equally accurate sparse
+logistic regressions, drawn in two ways. In the first, each regression is
+trained on a random 50 to 90% of the training rows, the share that each tree of
+a boosting sees (198 of 200 candidates were within 0.01 AUC of the best one).
+In the second, every regression sees all the rows and only the penalty varies
+(200 of 200 within 0.01 AUC). As for the rows they see, the boostings sit in
+between: each of their trees sees part of the rows, but the model as a whole
+sees all of them.
+
+| Measure | Gradient boostings | Logistic regressions, each on 50-90% of rows | Logistic regressions, all rows |
+|---|---|---|---|
+| People whose yes/no prediction differs in at least one of the 50 models | 23.0% [21.1, 24.9] | 20.8% [18.9, 22.7] | 12.0% [10.5, 13.4] |
+| People whose yes/no prediction differs between two models | 4.1% [3.7, 4.6] | 5.6% [5.0, 6.2] | 3.5% [3.0, 4.0] |
+| Among the people of the first line, those whose average risk is between 0.4 and 0.6 | 80% [76, 84] | 99% [98, 100] | 99% [97, 100] |
+| People with the same main variable in all 50 models | 64% [62, 66] | 68% [66, 70] | 82% [80, 83] |
+| People with the same main variable in two models | 92% [91, 92] | 92% [91, 93] | 95% [95, 96] |
 
 What the numbers show:
 
 - For the data set as a whole, the 50 models tell the same story: the number of
-  priors comes first and age second in every model.
+  priors comes first and age second in every model, ahead of the five others.
 - For one person, the story is less stable, and so is the decision: for 23% of
-  people, some of these equally accurate models predict re-arrest and others do
-  not.
-- Equally accurate logistic regressions disagree almost as much. The
-  instability comes from the multiplicity of good models (the Rashomon effect),
-  not from post-hoc explanations or from black boxes. An explanation describes
-  one model, not what another equally good model would decide.
+  people, at least one of these equally accurate models gives a different
+  yes/no prediction from the others. Between two models drawn at random, the
+  prediction differs for 4.1% of people, and most of the people concerned have
+  a predicted risk close to 0.5.
+- Readable models are not immune. Equally accurate logistic regressions also
+  change the decision about some people: between two models, for 3.5% of
+  people when all rows are used and 5.6% with random subsets of rows, against
+  4.1% for the boostings. Over the 50 models, the regressions trained on all
+  rows change it for 12% of people, about half as many as the boostings (23%),
+  and almost all of these people (99%) have a risk between 0.4 and 0.6, against
+  80% for the boostings. Part of the instability thus comes from the
+  multiplicity of good models (the Rashomon effect), which readable models
+  share; the boostings add some of their own, spread over more people. An
+  explanation, like the reading of one readable model, describes one model, not
+  what another equally good model would decide.
 
 One example from the test set: a 61-year-old man with 20 priors and a
 non-felony charge. Model A (AUC 0.727) gives him a risk of 0.65 and its largest
